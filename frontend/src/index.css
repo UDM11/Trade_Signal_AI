@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #0f172a; /* Slate 900 */
+  --color-surface: #1e293b; /* Slate 800 */
+  --color-primary: #3b82f6; /* Blue 500 */
+  --color-primary-focus: #2563eb;
+  --color-text: #f8fafc; /* Slate 50 */
+  --color-text-muted: #94a3b8; /* Slate 400 */
+  
+  --color-buy: #10b981; /* Emerald 500 */
+  --color-sell: #ef4444; /* Red 500 */
+  --color-hold: #eab308; /* Yellow 500 */
+}
+
+body {
+    background-color: var(--color-background);
+    color: var(--color-text);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
