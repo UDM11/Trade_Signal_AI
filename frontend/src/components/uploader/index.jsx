@@ -73,7 +73,6 @@ export default function CSVUploader({ onUploadComplete }) {
         setDone(false);
         setProgress(0);
 
-        // Animate steps + progress
         const timers = [];
         timers.push(setTimeout(() => { setStep(1); setProgress(10); }, 0));
         timers.push(setTimeout(() => setProgress(30), 600));
@@ -95,14 +94,12 @@ export default function CSVUploader({ onUploadComplete }) {
     };
 
     const reset = () => { setFile(null); setError(null); setDone(false); setStep(0); setProgress(0); };
-
     const estRows = file ? estimateRows(file) : 0;
 
     return (
         <div className="rounded-2xl overflow-hidden border border-white/5 shadow-2xl flex flex-col"
             style={{ background: '#080f1a' }}>
 
-            {/* ── Header ──────────────────────────────────────────────────── */}
             <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <div className="p-2 rounded-xl" style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)' }}>
@@ -121,8 +118,6 @@ export default function CSVUploader({ onUploadComplete }) {
             </div>
 
             <div className="p-5 sm:p-6 space-y-4">
-
-                {/* ── Drop Zone ─────────────────────────────────────────────── */}
                 {!file && (
                     <label
                         htmlFor="file-upload"
@@ -137,17 +132,15 @@ export default function CSVUploader({ onUploadComplete }) {
                             transform:    dragging ? 'scale(1.01)' : 'scale(1)',
                         }}
                     >
-                        {/* Animated upload icon */}
                         <div className="relative">
                             <div className="p-5 rounded-2xl transition-all duration-200"
                                 style={{
-                                    background:   dragging ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)',
-                                    border:       `1px solid ${dragging ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.07)'}`,
+                                    background: dragging ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)',
+                                    border:     `1px solid ${dragging ? 'rgba(59,130,246,0.4)' : 'rgba(255,255,255,0.07)'}`,
                                 }}>
                                 <UploadCloud className="w-9 h-9 transition-colors duration-200"
                                     style={{ color: dragging ? '#60a5fa' : '#475569' }} />
                             </div>
-                            {/* Pulse ring on drag */}
                             {dragging && (
                                 <div className="absolute inset-0 rounded-2xl animate-ping"
                                     style={{ border: '1px solid rgba(59,130,246,0.3)' }} />
@@ -164,7 +157,6 @@ export default function CSVUploader({ onUploadComplete }) {
                             <p className="text-[11px] text-slate-600 mt-2">CSV · Excel (.xlsx / .xls) · PDF · NEPSE Meroshare / Broker exports</p>
                         </div>
 
-                        {/* Tips row */}
                         <div className="flex items-center gap-2 px-3 py-2 rounded-xl w-full max-w-xs"
                             style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
                             {React.createElement(TIPS[tipIdx].icon, { className: 'w-3.5 h-3.5 text-blue-400 shrink-0' })}
@@ -182,7 +174,6 @@ export default function CSVUploader({ onUploadComplete }) {
                     </label>
                 )}
 
-                {/* ── File Preview ───────────────────────────────────────────── */}
                 {file && !loading && (
                     <div className="rounded-xl border border-white/8 overflow-hidden" style={{ background: 'rgba(255,255,255,0.02)' }}>
                         <div className="flex items-center gap-3 p-4">
@@ -206,8 +197,6 @@ export default function CSVUploader({ onUploadComplete }) {
                                 : <FileText className="w-4 h-4 text-slate-600 shrink-0" />
                             }
                         </div>
-
-                        {/* Done state success bar */}
                         {done && (
                             <div className="px-4 pb-3">
                                 <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
@@ -219,11 +208,8 @@ export default function CSVUploader({ onUploadComplete }) {
                     </div>
                 )}
 
-                {/* ── Loading State ──────────────────────────────────────────── */}
                 {loading && (
                     <div className="rounded-xl border border-white/8 p-4 space-y-4" style={{ background: 'rgba(255,255,255,0.02)' }}>
-
-                        {/* Progress bar */}
                         <div>
                             <div className="flex justify-between items-center mb-1.5">
                                 <span className="text-[11px] text-slate-500 font-semibold">Processing…</span>
@@ -240,8 +226,6 @@ export default function CSVUploader({ onUploadComplete }) {
                                 />
                             </div>
                         </div>
-
-                        {/* Steps */}
                         <div className="space-y-2.5">
                             {STEPS.map((s, i) => {
                                 const idx        = i + 1;
@@ -251,7 +235,6 @@ export default function CSVUploader({ onUploadComplete }) {
                                 return (
                                     <div key={i} className="flex items-center gap-3 transition-all duration-300"
                                         style={{ opacity: isPending ? 0.25 : 1 }}>
-                                        {/* Step indicator */}
                                         <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-all duration-300"
                                             style={{
                                                 background: isComplete ? 'rgba(16,185,129,0.15)' : isActive ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)',
@@ -264,16 +247,12 @@ export default function CSVUploader({ onUploadComplete }) {
                                                     : <s.icon className="w-3.5 h-3.5 text-slate-600" />
                                             }
                                         </div>
-
-                                        {/* Label + desc */}
                                         <div className="flex-1 min-w-0">
                                             <p className="text-xs font-bold" style={{ color: isComplete ? '#10b981' : isActive ? '#fff' : '#475569' }}>
                                                 {s.label}
                                             </p>
                                             <p className="text-[10px] text-slate-600">{s.desc}</p>
                                         </div>
-
-                                        {/* Right side */}
                                         {isActive && (
                                             <div className="flex gap-1 shrink-0">
                                                 {[0, 1, 2].map(d => (
@@ -292,23 +271,18 @@ export default function CSVUploader({ onUploadComplete }) {
                     </div>
                 )}
 
-                {/* ── Error ─────────────────────────────────────────────────── */}
                 {error && (
                     <div className="rounded-xl p-4 border space-y-2" style={{ background: 'rgba(239,68,68,0.06)', borderColor: 'rgba(239,68,68,0.2)' }}>
                         <div className="flex items-start gap-2.5">
                             <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
                             <p className="text-sm text-red-400 leading-snug">{error}</p>
                         </div>
-                        <button
-                            onClick={() => setError(null)}
-                            className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
-                        >
+                        <button onClick={() => setError(null)} className="text-[11px] text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2">
                             Dismiss
                         </button>
                     </div>
                 )}
 
-                {/* ── Required Columns ──────────────────────────────────────── */}
                 {!loading && (
                     <div className="space-y-2">
                         <p className="text-[10px] text-slate-600 uppercase tracking-widest font-semibold">Required Columns</p>
@@ -324,16 +298,13 @@ export default function CSVUploader({ onUploadComplete }) {
                     </div>
                 )}
 
-                {/* ── Upload Button ──────────────────────────────────────────── */}
                 {file && !done && (
                     <button
                         onClick={handleUpload}
                         disabled={loading}
                         className="w-full flex items-center justify-center gap-2.5 py-3 px-6 rounded-xl font-bold text-sm text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         style={{
-                            background: loading
-                                ? 'rgba(59,130,246,0.4)'
-                                : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                            background: loading ? 'rgba(59,130,246,0.4)' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
                             boxShadow: loading ? 'none' : '0 0 24px rgba(59,130,246,0.3), inset 0 1px 0 rgba(255,255,255,0.1)',
                         }}
                     >
@@ -351,7 +322,6 @@ export default function CSVUploader({ onUploadComplete }) {
                     </button>
                 )}
 
-                {/* ── Re-upload ─────────────────────────────────────────────── */}
                 {done && (
                     <button
                         onClick={reset}

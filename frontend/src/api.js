@@ -18,5 +18,22 @@ export const api = {
     },
     getHistory: async () => {
         return axios.get(`${API_BASE}/predictions`);
-    }
+    },
+
+    // ── NEPSE Live Market ───────────────────────────────────────────────────
+    getNepseLive: async () => {
+        return axios.get(`${API_BASE}/nepse/live`);
+    },
+    getNepseHistory: async () => {
+        return axios.get(`${API_BASE}/nepse/history`);
+    },
+    getNepseChart: async (symbol) => {
+        return axios.get(`${API_BASE}/nepse/chart/${encodeURIComponent(symbol)}`);
+    },
+    getNepseStatus: async () => {
+        return axios.get(`${API_BASE}/nepse/status`);
+    },
+    getNepseQuote: async (symbol) => {
+        return axios.get(`${API_BASE}/nepse/quote/${encodeURIComponent(symbol)}`);
+    },
 };

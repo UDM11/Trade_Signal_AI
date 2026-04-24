@@ -4,7 +4,7 @@ import {
     Search, ChevronRight, BarChart2, AlertCircle, Target, Shield,
     CalendarClock, Percent, Activity, SlidersHorizontal,
 } from 'lucide-react';
-import { api } from '../api';
+import { api } from '../../api';
 
 const SIGNAL = {
     BUY:  { color: 'text-buy',  bg: 'bg-buy/10',  border: 'border-buy/30',  bar: 'bg-buy',  glow: 'shadow-[0_0_16px_rgba(16,185,129,0.15)]',  icon: TrendingUp  },

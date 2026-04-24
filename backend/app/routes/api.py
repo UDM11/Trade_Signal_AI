@@ -7,6 +7,8 @@ import pandas as pd
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from typing import Optional
 from datetime import datetime, timezone
+import asyncio
+from app.services.nepse_service import get_live_data, get_stock_chart, is_market_open, get_live_quote
 from app.limiter import limiter
 
 logger = logging.getLogger(__name__)
@@ -433,3 +435,75 @@ async def get_predictions():
     # Local fallback
     records = _load_local_history()
     return {"data": records}
+
+
+# ── NEPSE Live Market Routes ───────────────────────────────────────────────────
+
+@router.get("/nepse/status")
+async def nepse_market_status():
+    """Quick check — is NEPSE open right now?"""
+    return {
+        "is_open":   is_market_open(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.get("/nepse/live")
+@limiter.limit("30/minute")
+async def nepse_live(request: Request):
+    from app.services.nepse_service import get_live_data, _last_good_response
+    try:
+        result = await asyncio.wait_for(get_live_data(), timeout=55.0)
+        return result
+    except asyncio.TimeoutError:
+        if _last_good_response:
+            stale = dict(_last_good_response)
+            stale["stale"] = True
+            stale["stale_reason"] = "NEPSE server slow — showing last cached data"
+            return stale
+        return {"error": "NEPSE server is not responding. Please try again later."}
+    except Exception as e:
+        logger.error("nepse_live error: %s", e)
+        if _last_good_response:
+            stale = dict(_last_good_response)
+            stale["stale"] = True
+            return stale
+        return {"error": str(e)}
+
+
+@router.get("/nepse/chart/{symbol}")
+@limiter.limit("20/minute")
+async def nepse_chart(request: Request, symbol: str):
+    """Historical daily OHLCV for a single NEPSE symbol (for chart rendering)."""
+    try:
+        result = await asyncio.wait_for(get_stock_chart(symbol), timeout=40.0)
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Chart data fetch timed out. Please try again."}
+    except Exception as e:
+        logger.error("nepse_chart error: %s", e)
+        return {"error": str(e)}
+
+@router.get("/nepse/quote/{symbol}")
+@limiter.limit("120/minute")
+async def nepse_quote(request: Request, symbol: str):
+    """Live price quote for one symbol — uses a 5s shared getLiveMarket() cache."""
+    try:
+        return await asyncio.wait_for(get_live_quote(symbol), timeout=12.0)
+    except Exception as e:
+        return {"symbol": symbol.upper(), "ltp": 0, "live": False, "error": str(e)}
+
+
+@router.get("/nepse/history")
+@limiter.limit("20/minute")
+async def nepse_history(request: Request):
+    """Lifetime historical OHLCV for the NEPSE Index."""
+    from app.services.nepse_service import get_nepse_history
+    try:
+        result = await asyncio.wait_for(get_nepse_history(), timeout=40.0)
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Index history fetch timed out. Please try again."}
+    except Exception as e:
+        logger.error("nepse_history error: %s", e)
+        return {"error": str(e)}

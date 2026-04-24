@@ -184,10 +184,18 @@ function calcIchimoku(data) {
 function filterByDays(data, days) {
     if (!days || !data?.length) return data ?? [];
     const sorted = [...data].sort((a, b) => (a.time > b.time ? 1 : -1));
-    const cutoff = new Date(sorted[sorted.length - 1].time);
+    const isSeconds = typeof sorted[0].time === "number";
+    const lastTime = isSeconds ? sorted[sorted.length - 1].time * 1000 : sorted[sorted.length - 1].time;
+    const cutoff = new Date(lastTime);
     cutoff.setDate(cutoff.getDate() - days);
-    const cs = cutoff.toISOString().slice(0, 10);
-    return sorted.filter(d => d.time >= cs);
+    
+    if (isSeconds) {
+        const cs = Math.floor(cutoff.getTime() / 1000);
+        return sorted.filter(d => d.time >= cs);
+    } else {
+        const cs = cutoff.toISOString().slice(0, 10);
+        return sorted.filter(d => d.time >= cs);
+    }
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -231,7 +239,7 @@ const lineOpt = (color, w = 1.5, style = 0) => ({
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TradingChart({
-    data, prediction, signalHistory,
+    data, liveCandle, prediction, signalHistory, defaultChartType = "candle",
     targetPrice, stopLoss, estimatedDays, targetPct, stopLossPct, riskReward,
     idealEntry, entryZoneLow, entryZoneHigh, target2, target2Pct, trailingStop,
 }) {
@@ -245,9 +253,12 @@ export default function TradingChart({
     const S         = useRef({});
     const markersP  = useRef();
     const priceLines = useRef([]);
+    const roRef     = useRef(null);
+    const prevTf    = useRef(null);
+    const hasFitContent = useRef(false);
 
     const [tf,          setTf]          = useState("ALL");
-    const [chartType,   setChartType]   = useState("candle");
+    const [chartType,   setChartType]   = useState(defaultChartType);
     const [overlay,     setOverlay]     = useState({ sma20: true, sma50: true, ema200: false, ema9: false, ema21: false, bb: false, vwap: false, ich: false });
     const [subInd,      setSubInd]      = useState("rsi");
     const [ohlcv,       setOhlcv]       = useState(null);
@@ -308,6 +319,16 @@ export default function TradingChart({
     }, [toggleFullscreen]);
 
     // ── Chart init (once per data load) ───────────────────────────────────────
+    useEffect(() => {
+        return () => {
+            if (roRef.current) roRef.current.disconnect();
+            if (mainChart.current) mainChart.current.remove();
+            if (subChart.current) subChart.current.remove();
+            mainChart.current = null; subChart.current = null; S.current = {};
+            inited.current = false;
+        };
+    }, []);
+
     useEffect(() => {
         if (inited.current || !data?.length || !mainRef.current || !subRef.current) return;
         inited.current = true;
@@ -423,13 +444,7 @@ export default function TradingChart({
         const ro = new ResizeObserver(onResize);
         if (mainRef.current) ro.observe(mainRef.current);
         if (subRef.current)  ro.observe(subRef.current);
-
-        return () => {
-            inited.current = false;
-            ro.disconnect();
-            mc.remove(); sc.remove();
-            mainChart.current = null; subChart.current = null; S.current = {};
-        };
+        roRef.current = ro;
     }, [data]);
 
     // ── Update all data / overlays / sub-panels ────────────────────────────────
@@ -580,8 +595,37 @@ export default function TradingChart({
             markersP.current = plugin;
         }
 
-        mainChart.current?.timeScale().fitContent();
+        if (prevTf.current !== tf || !hasFitContent.current) {
+            mainChart.current?.timeScale().fitContent();
+            prevTf.current = tf;
+            hasFitContent.current = true;
+        }
     }, [data, tf, chartType, overlay, subInd, prediction, idealEntry, entryZoneLow, entryZoneHigh, targetPrice, target2, stopLoss, trailingStop, targetPct, target2Pct, stopLossPct, signalHistory, filteredData]);
+
+    // ── Live candle — update rightmost bar in real-time without full redraw ──
+    useEffect(() => {
+        if (!liveCandle || !S.current.candle || !data?.length) return;
+        try {
+            if (chartType === "line") {
+                S.current.lineChart.update({ time: liveCandle.time, value: liveCandle.close });
+            } else {
+                S.current.candle.update({
+                    time:  liveCandle.time,
+                    open:  liveCandle.open,
+                    high:  liveCandle.high,
+                    low:   liveCandle.low,
+                    close: liveCandle.close,
+                });
+            }
+            S.current.vol.update({
+                time:  liveCandle.time,
+                value: liveCandle.value ?? 0,
+                color: liveCandle.close >= liveCandle.open
+                    ? "rgba(38,166,154,0.35)"
+                    : "rgba(239,83,80,0.35)",
+            });
+        } catch (e) { /* ignore time-ordering errors when chart resets */ }
+    }, [liveCandle, chartType, data?.length]);
 
     if (!data?.length) return null;
 
@@ -672,16 +716,28 @@ export default function TradingChart({
                     </span>
                 )}
 
+                {/* LIVE badge — shown when real-time candle is active */}
+                {liveCandle && (
+                    <span className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded"
+                        style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.25)" }}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        LIVE
+                    </span>
+                )}
+
+                {/* Spacer — pushes signal + fullscreen to far right */}
+                <div style={{ flex: 1 }} />
+
                 {/* Signal badge */}
                 {prediction && (
-                    <div className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-lg border font-black text-xs tracking-widest"
+                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg border font-black text-xs tracking-widest"
                         style={{ background: `${sigColor}14`, borderColor: `${sigColor}40`, color: sigColor }}>
                         <SigIcon style={{ width: 12, height: 12 }} />
                         {prediction}
                     </div>
                 )}
 
-                {/* Fullscreen */}
+                {/* Fullscreen — always pinned to right */}
                 <button onClick={toggleFullscreen} title={`${isFullscreen ? "Exit" : "Enter"} fullscreen (F)`}
                     className="p-1.5 rounded-md transition-colors hover:bg-white/5" style={{ color: "#4a6080" }}>
                     {isFullscreen ? <Minimize2 style={{ width: 14, height: 14 }} /> : <Maximize2 style={{ width: 14, height: 14 }} />}
