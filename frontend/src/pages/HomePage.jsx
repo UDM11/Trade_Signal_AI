@@ -60,8 +60,10 @@ function StatCard({ label, value, sub, Icon, color, glow, border, trend }) {
 }
 
 // ── Mover row ────────────────────────────────────────────────────────────────
-function MoverRow({ stock, isGainer, rank, onNavigate }) {
-    const cc = chgColor(stock.change_pct);
+function MoverRow({ stock, isGainer, rank, mode, onNavigate }) {
+    const isVolume   = mode === 'volume';
+    const isTurnover = mode === 'turnover';
+    const cc = isVolume ? '#8b5cf6' : isTurnover ? '#f59e0b' : chgColor(stock.change_pct);
     return (
         <button onClick={() => onNavigate('live', stock.symbol)}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left"
@@ -75,7 +77,9 @@ function MoverRow({ stock, isGainer, rank, onNavigate }) {
                 <p className="text-[10px] tabular-nums" style={{ color: '#475569' }}>Rs. {fmt(stock.ltp)}</p>
             </div>
             <span className="text-sm font-black tabular-nums shrink-0" style={{ color: cc }}>
-                {isGainer ? '+' : ''}{fmt(stock.change_pct)}%
+                {isVolume   ? fmtVol(stock.volume)
+                : isTurnover ? `Rs.${fmtVol(stock.turnover)}`
+                : `${isGainer ? '+' : ''}${fmt(stock.change_pct)}%`}
             </span>
         </button>
     );
@@ -108,6 +112,14 @@ function FeatureCard({ Icon, color, glow, border, title, desc, badge, onClick })
                 </div>
             </div>
         </button>
+    );
+}
+
+// ── Skeleton bone ────────────────────────────────────────────────────────────
+function Bone({ w = 'w-full', h = 'h-4', extra = '' }) {
+    return (
+        <div className={`${w} ${h} ${extra} rounded-lg animate-pulse`}
+            style={{ background: 'rgba(255,255,255,0.06)' }} />
     );
 }
 
@@ -192,17 +204,13 @@ export default function HomePage({ setPage }) {
     const idxUp     = (index?.change ?? 0) >= 0;
     const idxColor  = idxUp ? '#22c55e' : '#ef4444';
 
-    const gainers   = data?.gainers?.slice(0, 5)   ?? [];
-    const losers    = data?.losers?.slice(0, 5)    ?? [];
+    const gainers   = data?.gainers?.slice(0, 5)      ?? [];
+    const losers    = data?.losers?.slice(0, 5)       ?? [];
     const turnovers = data?.top_turnovers?.slice(0, 5) ?? [];
+    const volumes   = data?.top_volumes?.slice(0, 5)  ?? [];
     const adv = summary?.advancing ?? 0;
     const dec = summary?.declining ?? 0;
     const unc = summary?.unchanged ?? 0;
-
-    const Bone = ({ w = 'w-full', h = 'h-4', extra = '' }) => (
-        <div className={`${w} ${h} ${extra} rounded-lg animate-pulse`}
-            style={{ background: 'rgba(255,255,255,0.06)' }} />
-    );
 
     if (loading) {
         return (
@@ -236,8 +244,8 @@ export default function HomePage({ setPage }) {
                     ))}
                 </div>
                 {/* Movers skeleton */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                    {[...Array(3)].map((_, i) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[...Array(4)].map((_, i) => (
                         <div key={i} className="rounded-2xl p-5 space-y-3" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
                             <Bone w="w-32" h="h-4" />
                             {[...Array(5)].map((_, j) => <Bone key={j} h="h-10" extra="rounded-xl" />)}
@@ -353,12 +361,13 @@ export default function HomePage({ setPage }) {
             )}
 
             {/* ── Top movers ──────────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {[
-                    { title: 'Top Gainers',   Icon: TrendingUp,   color: '#22c55e', glow: 'rgba(34,197,94,0.08)',   border: 'rgba(34,197,94,0.18)',   list: gainers,   isGainer: true  },
-                    { title: 'Top Losers',    Icon: TrendingDown, color: '#ef4444', glow: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.18)',   list: losers,    isGainer: false },
-                    { title: 'Top Turnover',  Icon: DollarSign,   color: '#f59e0b', glow: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.18)',  list: turnovers, isGainer: null  },
-                ].map(({ title, Icon, color, glow, border, list, isGainer }) => (
+                    { title: 'Top Gainers',  Icon: TrendingUp,   color: '#22c55e', glow: 'rgba(34,197,94,0.08)',   border: 'rgba(34,197,94,0.18)',   list: gainers,   isGainer: true,  mode: 'pct'      },
+                    { title: 'Top Losers',   Icon: TrendingDown, color: '#ef4444', glow: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.18)',   list: losers,    isGainer: false, mode: 'pct'      },
+                    { title: 'Top Turnover', Icon: DollarSign,   color: '#f59e0b', glow: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.18)',  list: turnovers, isGainer: null,  mode: 'turnover' },
+                    { title: 'Top Volume',   Icon: BarChart2,    color: '#8b5cf6', glow: 'rgba(139,92,246,0.08)',  border: 'rgba(139,92,246,0.18)',  list: volumes,   isGainer: null,  mode: 'volume'   },
+                ].map(({ title, Icon, color, glow, border, list, isGainer, mode }) => (
                     <div key={title} className="rounded-2xl overflow-hidden"
                         style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
                         <div className="absolute-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${color}40, transparent)` }} />
@@ -379,7 +388,7 @@ export default function HomePage({ setPage }) {
                         </div>
                         <div className="p-3 space-y-1.5">
                             {list.length > 0 ? list.map((s, i) => (
-                                <MoverRow key={s.symbol} stock={s} isGainer={isGainer} rank={i + 1} onNavigate={goLive} />
+                                <MoverRow key={s.symbol} stock={s} isGainer={isGainer} rank={i + 1} mode={mode} onNavigate={goLive} />
                             )) : (
                                 <div className="py-6 text-center text-xs" style={{ color: '#334155' }}>No data</div>
                             )}

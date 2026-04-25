@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     TrendingUp, TrendingDown, Search, X, BarChart3, ArrowLeft,
     ChevronUp, ChevronDown, Clock, Wifi, WifiOff, Zap, DollarSign,
@@ -7,7 +7,7 @@ import {
 import TradingChart from '../chart';
 import { api } from '../../api';
 
-// â"€â"€ Theme constants (matches existing app) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Theme constants (matches existing app) �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 const SURFACE = 'rgba(8, 15, 26, 0.7)';
 const BORDER  = 'rgba(255, 255, 255, 0.08)';
 
@@ -50,14 +50,14 @@ const GLOBAL_STYLES = `
 }
 `;
 
-// â"€â"€ Formatters â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Formatters �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function fmt(n, d = 2) {
-    if (n == null || isNaN(n)) return '—"';
+    if (n == null || isNaN(n)) return '�"';
     return Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
 function fmtVol(n) {
-    if (!n) return '—"';
+    if (!n) return '�"';
     if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
     if (n >= 1e7) return (n / 1e7).toFixed(2) + 'Cr';
     if (n >= 1e5) return (n / 1e5).toFixed(2) + 'L';
@@ -71,7 +71,7 @@ function chgColor(v) {
     return '#64748b';
 }
 
-// â"€â"€ Auto-refresh Countdown Ring â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Auto-refresh Countdown Ring �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function CountdownRing({ refreshing }) {
     const R = 14;
     const C = 2 * Math.PI * R; // ~87.96
@@ -106,7 +106,7 @@ function CountdownRing({ refreshing }) {
     );
 }
 
-// â"€â"€ Sparkline Component â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Sparkline Component �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function Sparkline({ data, color }) {
     if (!data || data.length < 2) return null;
     
@@ -139,7 +139,7 @@ function Sparkline({ data, color }) {
         </svg>
     );
 }
-// â"€â"€ Summary Stats â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Summary Stats �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function SummaryCards({ summary }) {
     const adv   = summary?.advancing ?? 0;
     const dec   = summary?.declining ?? 0;
@@ -220,7 +220,7 @@ function SummaryCards({ summary }) {
                 </div>
             ))}
 
-            {/* â"€â"€ Market Breadth card â"€â"€ */}
+            {/* �"��"� Market Breadth card �"��"� */}
             <div
                 className="relative rounded-xl overflow-hidden transition-all hover:-translate-y-0.5"
                 style={{ background: SURFACE, border: `1px solid ${BORDER}`, boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}
@@ -262,15 +262,15 @@ function SummaryCards({ summary }) {
                         {/* Stat pills */}
                         <div className="flex flex-col gap-1.5 flex-1">
                             <div className="flex items-center justify-between px-2 py-1 rounded-lg" style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.15)' }}>
-                                <span className="text-[10px] font-bold text-emerald-400">▲ Up</span>
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400"><TrendingUp className="w-3 h-3" /> Up</span>
                                 <span className="text-[11px] font-black text-emerald-400 tabular-nums">{adv} <span className="font-medium opacity-70">{advPct}%</span></span>
                             </div>
                             <div className="flex items-center justify-between px-2 py-1 rounded-lg" style={{ background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.15)' }}>
-                                <span className="text-[10px] font-bold" style={{ color: '#64748b' }}>—" Flat</span>
+                                <span className="flex items-center gap-1 text-[10px] font-bold" style={{ color: '#64748b' }}><Activity className="w-3 h-3" /> Flat</span>
                                 <span className="text-[11px] font-black tabular-nums" style={{ color: '#64748b' }}>{unc} <span className="font-medium opacity-70">{uncPct}%</span></span>
                             </div>
                             <div className="flex items-center justify-between px-2 py-1 rounded-lg" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }}>
-                                <span className="text-[10px] font-bold text-red-400">▼ Down</span>
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-red-400"><TrendingDown className="w-3 h-3" /> Down</span>
                                 <span className="text-[11px] font-black text-red-400 tabular-nums">{dec} <span className="font-medium opacity-70">{decPct}%</span></span>
                             </div>
                         </div>
@@ -288,15 +288,16 @@ function SummaryCards({ summary }) {
     );
 }
 
-// â"€â"€ Movers Section â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Movers Section �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function MoverRow({ stock, isGainer, rank, maxPct, mode, onClick }) {
     const isTurnover = mode === 'turnover';
-    const cc       = isTurnover ? '#f59e0b' : isGainer ? '#22c55e' : '#ef4444';
-    const bgHover  = isTurnover ? 'rgba(245,158,11,0.07)' : isGainer ? 'rgba(34,197,94,0.06)'  : 'rgba(239,68,68,0.05)';
-    const bgNormal = isTurnover ? 'rgba(245,158,11,0.03)' : isGainer ? 'rgba(34,197,94,0.03)'  : 'rgba(239,68,68,0.02)';
-    const barColor = isTurnover ? 'rgba(245,158,11,0.22)' : isGainer ? 'rgba(34,197,94,0.25)'  : 'rgba(239,68,68,0.2)';
-    const borderC  = isTurnover ? 'rgba(245,158,11,0.08)' : isGainer ? 'rgba(34,197,94,0.08)'  : 'rgba(239,68,68,0.06)';
-    const val      = isTurnover ? (stock.turnover ?? 0) : Math.abs(stock.change_pct ?? 0);
+    const isVolume   = mode === 'volume';
+    const cc       = isTurnover ? '#f59e0b' : isVolume ? '#8b5cf6' : isGainer ? '#22c55e' : '#ef4444';
+    const bgHover  = isTurnover ? 'rgba(245,158,11,0.07)' : isVolume ? 'rgba(139,92,246,0.07)' : isGainer ? 'rgba(34,197,94,0.06)'  : 'rgba(239,68,68,0.05)';
+    const bgNormal = isTurnover ? 'rgba(245,158,11,0.03)' : isVolume ? 'rgba(139,92,246,0.03)' : isGainer ? 'rgba(34,197,94,0.03)'  : 'rgba(239,68,68,0.02)';
+    const barColor = isTurnover ? 'rgba(245,158,11,0.22)' : isVolume ? 'rgba(139,92,246,0.22)' : isGainer ? 'rgba(34,197,94,0.25)'  : 'rgba(239,68,68,0.2)';
+    const borderC  = isTurnover ? 'rgba(245,158,11,0.08)' : isVolume ? 'rgba(139,92,246,0.08)' : isGainer ? 'rgba(34,197,94,0.08)'  : 'rgba(239,68,68,0.06)';
+    const val      = isTurnover ? (stock.turnover ?? 0) : isVolume ? (stock.volume ?? 0) : Math.abs(stock.change_pct ?? 0);
     const barWidth = maxPct > 0 ? `${(val / maxPct) * 100}%` : '0%';
 
     const prevLtpRef = useRef(stock.ltp);
@@ -346,6 +347,10 @@ function MoverRow({ stock, isGainer, rank, maxPct, mode, onClick }) {
                             <span className="text-sm font-black tabular-nums" style={{ color: cc }}>
                                 Rs.{fmtVol(stock.turnover)}
                             </span>
+                        ) : isVolume ? (
+                            <span className="text-sm font-black tabular-nums" style={{ color: cc }}>
+                                {fmtVol(stock.volume)}
+                            </span>
                         ) : (
                             <>
                                 <span className="text-sm font-black tabular-nums" style={{ color: cc }}>
@@ -365,19 +370,22 @@ function MoverRow({ stock, isGainer, rank, maxPct, mode, onClick }) {
     );
 }
 
-function MoversSection({ gainers, losers, turnovers, onSelect }) {
+function MoversSection({ gainers, losers, turnovers, volumes, onSelect }) {
     const panels = [
         { title: 'Top Gainers',   Icon: TrendingUp,   iconColor: '#22c55e', accentBg: 'rgba(34,197,94,0.07)',   accentBorder: 'rgba(34,197,94,0.2)',   list: gainers,   isGainer: true,  mode: 'pct'      },
         { title: 'Top Losers',    Icon: TrendingDown, iconColor: '#ef4444', accentBg: 'rgba(239,68,68,0.06)',  accentBorder: 'rgba(239,68,68,0.18)',  list: losers,    isGainer: false, mode: 'pct'      },
         { title: 'Top Turnovers', Icon: DollarSign,   iconColor: '#f59e0b', accentBg: 'rgba(245,158,11,0.07)', accentBorder: 'rgba(245,158,11,0.2)',  list: turnovers, isGainer: null,  mode: 'turnover' },
+        { title: 'Top Volume',    Icon: BarChart2,    iconColor: '#8b5cf6', accentBg: 'rgba(139,92,246,0.07)', accentBorder: 'rgba(139,92,246,0.2)',  list: volumes,   isGainer: null,  mode: 'volume'   },
     ];
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {panels.map(({ title, Icon, iconColor, accentBg, accentBorder, list, isGainer, mode }) => {
                 const top    = list.slice(0, 7);
                 const maxVal = mode === 'turnover'
                     ? Math.max(...top.map(s => s.turnover ?? 0), 1)
+                    : mode === 'volume'
+                    ? Math.max(...top.map(s => s.volume ?? 0), 1)
                     : Math.max(...top.map(s => Math.abs(s.change_pct ?? 0)), 1);
 
                 return (
@@ -396,7 +404,7 @@ function MoversSection({ gainers, losers, turnovers, onSelect }) {
                                 <div>
                                     <p className="text-xs font-black text-white tracking-wide">{title}</p>
                                     <p className="text-[10px] font-medium" style={{ color: '#334155' }}>
-                                        {list.length} stocks Â· Today
+                                        {list.length} stocks · Today
                                     </p>
                                 </div>
                             </div>
@@ -406,6 +414,8 @@ function MoversSection({ gainers, losers, turnovers, onSelect }) {
                                     <span className="text-[10px] font-black" style={{ color: iconColor }}>
                                         {mode === 'turnover'
                                             ? `Rs.${fmtVol(top[0].turnover)}`
+                                            : mode === 'volume'
+                                            ? `Vol:${fmtVol(top[0].volume)}`
                                             : `${isGainer ? '+' : ''}${fmt(top[0].change_pct)}%`}
                                     </span>
                                     <span className="text-[9px] font-semibold" style={{ color: '#475569' }}>top</span>
@@ -441,7 +451,7 @@ function MoversSection({ gainers, losers, turnovers, onSelect }) {
     );
 }
 
-// â"€â"€ All Stocks Table â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� All Stocks Table �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 const COLS = [
     { key: 'symbol',     label: 'Symbol',  numeric: false },
     { key: 'ltp',        label: 'LTP',     numeric: true  },
@@ -451,7 +461,6 @@ const COLS = [
     { key: 'high',       label: 'High',    numeric: true  },
     { key: 'low',        label: 'Low',     numeric: true  },
     { key: 'volume',     label: 'Volume',  numeric: true  },
-    { key: 'trades',     label: 'Trades',  numeric: true  },
 ];
 
 function SortIcon({ col, sort }) {
@@ -550,10 +559,6 @@ function StockRow({ stock, onSelect }) {
                 {fmtVol(stock.volume)}
             </td>
 
-            {/* Trades */}
-            <td className="px-3 py-2.5 tabular-nums text-xs" style={{ color: '#475569' }}>
-                {fmtVol(stock.trades)}
-            </td>
 
             {/* View */}
             <td className="px-3 py-2.5">
@@ -614,14 +619,14 @@ function StocksTable({ stocks, search, setSearch, sort, setSort, onSelect }) {
                     </span>
                 </div>
 
-                {/* Right: search —" full width on mobile */}
+                {/* Right: search �" full width on mobile */}
                 <div className="sm:ml-auto flex items-center gap-2 px-3 py-2 rounded-xl w-full sm:w-auto"
                     style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
                     <Search className="w-3.5 h-3.5 shrink-0" style={{ color: '#475569' }} />
                     <input
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        placeholder="Search symbol or name—¦"
+                        placeholder="Search symbol or name��"
                         className="bg-transparent text-xs text-white placeholder-slate-600 outline-none flex-1 min-w-0"
                         style={{ minWidth: 0 }}
                     />
@@ -704,7 +709,7 @@ function StocksTable({ stocks, search, setSearch, sort, setSort, onSelect }) {
     );
 }
 
-// â"€â"€ Stock Detail Panel (slide-in from right) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Stock Detail Panel (slide-in from right) �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 function getNPTDateStr() {
     return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kathmandu' }).format(new Date());
 }
@@ -776,7 +781,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                         value: q.volume || 0,
                     });
                 }
-            } catch { /* ignore — chart keeps showing last known price */ }
+            } catch { /* ignore � chart keeps showing last known price */ }
         };
         poll();
         const id = setInterval(poll, 5000);
@@ -811,7 +816,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                             </span>
                             <span className="text-sm font-bold px-2.5 py-1 rounded-lg"
                                 style={{ color: cc, background: up ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.08)' }}>
-                                {up ? '▲' : '▼'} {up ? '+' : ''}{fmt(stock.change)} ({up ? '+' : ''}{fmt(stock.change_pct)}%)
+                                {up ? '?' : '?'} {up ? '+' : ''}{fmt(stock.change)} ({up ? '+' : ''}{fmt(stock.change_pct)}%)
                             </span>
                         </div>
                     </div>
@@ -819,7 +824,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                     {/* Right: symbol switcher + close */}
                     <div className="flex items-center gap-2 shrink-0">
 
-                        {/* Symbol search — switch to any other stock without closing */}
+                        {/* Symbol search � switch to any other stock without closing */}
                         <div ref={symRef} className="relative">
                             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
                                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}>
@@ -878,10 +883,10 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                 <div className="px-5 py-3 grid grid-cols-2 sm:grid-cols-4 gap-4 rounded-2xl mb-4"
                     style={{ background: 'rgba(8,15,26,0.8)', border: '1px solid rgba(255,255,255,0.06)' }}>
                     {[
-                        { label: 'Open',       value: stock.open > 0 ? fmt(stock.open) : '—"',   color: stock.open > 0 ? 'white' : '#334155'    },
+                        { label: 'Open',       value: stock.open > 0 ? fmt(stock.open) : '�"',   color: stock.open > 0 ? 'white' : '#334155'    },
                         { label: 'High',       value: fmt(stock.high),                           color: '#22c55e'                               },
                         { label: 'Low',        value: fmt(stock.low),                            color: '#ef4444'                               },
-                        { label: 'Prev Close', value: prevClose > 0 ? fmt(prevClose) : '—"',      color: prevClose > 0 ? '#94a3b8' : '#334155'   },
+                        { label: 'Prev Close', value: prevClose > 0 ? fmt(prevClose) : '�"',      color: prevClose > 0 ? '#94a3b8' : '#334155'   },
                     ].map(({ label, value, color }) => (
                         <div key={label}>
                             <p className="text-[10px] font-semibold uppercase tracking-widest mb-0.5"
@@ -917,7 +922,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                         {chartLoading ? (
                             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                                 <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                                <p className="text-xs" style={{ color: '#475569' }}>Loading historical data—¦</p>
+                                <p className="text-xs" style={{ color: '#475569' }}>Loading historical data��</p>
                             </div>
                         ) : chartData.length > 0 ? (
                             <TradingChart data={chartData} liveCandle={liveCandle} />
@@ -936,7 +941,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                         {chartLoading ? (
                             <div className="flex flex-col items-center justify-center py-16 gap-3">
                                 <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
-                                <p className="text-xs" style={{ color: '#475569' }}>Loading historical data—¦</p>
+                                <p className="text-xs" style={{ color: '#475569' }}>Loading historical data��</p>
                             </div>
                         ) : historyRows.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-16 gap-2">
@@ -957,7 +962,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                                 </thead>
                                 <tbody>
                                     {historyRows.map((row, idx) => {
-                                        // NEPSE history endpoint omits openPrice —" use prev row's close for change%
+                                        // NEPSE history endpoint omits openPrice �" use prev row's close for change%
                                         const prevClose = historyRows[idx + 1]?.close || 0;
                                         const chg    = prevClose > 0 ? row.close - prevClose : 0;
                                         const chgPct = prevClose > 0 ? (chg / prevClose) * 100 : 0;
@@ -972,7 +977,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                                                     {row.time}
                                                 </td>
                                                 <td className="px-4 py-2.5 tabular-nums" style={{ color: row.open > 0 ? 'white' : '#334155' }}>
-                                                    {row.open > 0 ? fmt(row.open) : '—"'}
+                                                    {row.open > 0 ? fmt(row.open) : '�"'}
                                                 </td>
                                                 <td className="px-4 py-2.5 tabular-nums text-emerald-400">{fmt(row.high)}</td>
                                                 <td className="px-4 py-2.5 tabular-nums text-red-400">{fmt(row.low)}</td>
@@ -992,7 +997,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                                                             {chg >= 0 ? '+' : ''}{fmt(chgPct)}%
                                                         </span>
                                                     ) : (
-                                                        <span style={{ color: '#334155' }}>—"</span>
+                                                        <span style={{ color: '#334155' }}>�"</span>
                                                     )}
                                                 </td>
                                             </tr>
@@ -1004,7 +1009,7 @@ function StockDetailPanel({ stock, chartData, chartLoading, onClose, isMarketOpe
                     </div>
                 )}
 
-                {/* Footer — volume / turnover */}
+                {/* Footer � volume / turnover */}
                 <div className="px-5 py-3 mt-4 rounded-2xl flex flex-wrap items-center gap-6"
                     style={{ background: 'rgba(8,15,26,0.8)', border: '1px solid rgba(255,255,255,0.06)' }}>
                     {[
@@ -1184,7 +1189,7 @@ function NepseChartSection({ data, stocks }) {
     );
 }
 
-// ── Error State ───────────────────────────────────────────────────────────────
+// -- Error State ---------------------------------------------------------------
 function ErrorState({ error, onRetry }) {
     const isInstallError = error?.includes('not installed');
     return (
@@ -1219,7 +1224,7 @@ function ErrorState({ error, onRetry }) {
     );
 }
 
-// â"€â"€ Main LiveMarket Component â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// �"��"� Main LiveMarket Component �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
 export default function LiveMarket() {
     const [data,         setData]         = useState(null);
     const [loading,      setLoading]      = useState(true);
@@ -1237,7 +1242,7 @@ export default function LiveMarket() {
 
 
 
-    // â"€â"€ Fetch NEPSE Historical Data once â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Fetch NEPSE Historical Data once �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
     useEffect(() => {
         api.getNepseHistory()
             .then(res => {
@@ -1248,7 +1253,7 @@ export default function LiveMarket() {
             .catch(err => console.error("Failed to fetch NEPSE history", err));
     }, []);
 
-    // â"€â"€ Fetch all live market data â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Fetch all live market data �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
     const fetchData = useCallback(async (isRefresh = false) => {
         if (isRefresh) setRefreshing(true);
         else { setLoading(true); setError(null); }
@@ -1270,7 +1275,7 @@ export default function LiveMarket() {
         }
     }, []);
 
-    // â"€â"€ Fetch chart for selected stock â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Fetch chart for selected stock �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
     const fetchChart = useCallback(async (symbol) => {
         setChartLoading(true);
         setChartData([]);
@@ -1286,7 +1291,7 @@ export default function LiveMarket() {
         }
     }, []);
 
-    // â"€â"€ Select a stock and load its chart â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Select a stock and load its chart �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
     const handleSelect = useCallback((stock) => {
 
         const fullStock = data?.stocks?.find(s => s.symbol === stock.symbol) || stock;
@@ -1373,7 +1378,7 @@ export default function LiveMarket() {
 
     }, [data?.stocks, fetchChart]);
 
-    // â"€â"€ Initial load â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Initial load �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
     useEffect(() => {
         const id = setTimeout(() => void fetchData(), 0);
         return () => clearTimeout(id);
@@ -1427,7 +1432,7 @@ export default function LiveMarket() {
         return history;
     }, [nepseHistory, data]);
 
-    // â"€â"€ Loading skeleton â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+    // �"��"� Loading skeleton �"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"��"�
         if (loading) {
         const Bone = ({ w = 'w-full', h = 'h-4', extra = '' }) => (
             <div className={`${w} ${h} ${extra} rounded-lg animate-pulse`}
@@ -1464,8 +1469,8 @@ export default function LiveMarket() {
                 </div>
 
                 {/* Movers skeleton */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {[...Array(3)].map((_, i) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {[...Array(4)].map((_, i) => (
                         <div key={i} className="rounded-xl p-4 space-y-3" style={{ background: 'rgba(8,15,26,0.7)', border: '1px solid rgba(255,255,255,0.08)' }}>
                             <div className="flex items-center justify-between mb-1">
                                 <div className="flex items-center gap-2">
@@ -1532,7 +1537,7 @@ if (error) {
     return (
         <div className="max-w-7xl mx-auto space-y-4">
 
-            {/* Stock detail full page — replaces market list when stock selected */}
+            {/* Stock detail full page � replaces market list when stock selected */}
             {selected && (
                 <StockDetailPanel
                     stock={selected}
@@ -1545,7 +1550,7 @@ if (error) {
                 />
             )}
 
-            {/* Market list — hidden when stock is selected */}
+            {/* Market list � hidden when stock is selected */}
             {!selected && (<>
 
             {/* Market status + NEPSE index */}
@@ -1561,11 +1566,12 @@ if (error) {
             )}
 
             {/* Top gainers + losers + turnovers */}
-            {(data?.gainers?.length > 0 || data?.losers?.length > 0 || data?.top_turnovers?.length > 0) && (
+            {(data?.gainers?.length > 0 || data?.losers?.length > 0 || data?.top_turnovers?.length > 0 || data?.top_volumes?.length > 0) && (
                 <MoversSection
                     gainers={data.gainers ?? []}
                     losers={data.losers  ?? []}
                     turnovers={data.top_turnovers ?? []}
+                    volumes={data.top_volumes ?? []}
                     onSelect={handleSelect}
                 />
             )}
@@ -1590,8 +1596,8 @@ if (error) {
                     <p className="text-sm font-semibold text-white">No stock data available</p>
                     <p className="text-xs text-center max-w-sm" style={{ color: '#475569' }}>
                         {data?.market_open
-                            ? 'Waiting for data from NEPSE…'
-                            : 'Market is closed. Price data from the last session may take a moment to load — the data server sometimes needs time to wake up.'}
+                            ? 'Waiting for data from NEPSE�'
+                            : 'Market is closed. Price data from the last session may take a moment to load � the data server sometimes needs time to wake up.'}
                     </p>
                     <button
                         onClick={() => fetchData(true)}
