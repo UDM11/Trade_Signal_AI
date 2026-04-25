@@ -175,11 +175,22 @@ async def get_live_data() -> dict:
     global _last_good_response, _nepse_instance
     nepse = await _client()
     today = _today_date()
+    market_open = is_market_open()
 
-    # Fire all requests in parallel, each with its own per-call timeout
+    # Only call getPriceVolumeHistory when market is open.
+    # When market is closed the endpoint errors for today — skip it to avoid
+    # noisy failures and unnecessary singleton resets.
+    async def _skip():
+        return []
+
+    pvh_coro = (
+        _safe(nepse.getPriceVolumeHistory(business_date=today), timeout=45)
+        if market_open else _skip()
+    )
+
     (pvh_raw, live_raw, summary_raw,
      gainers_raw, losers_raw, index_raw, nepse_chart_raw) = await asyncio.gather(
-        _safe(nepse.getPriceVolumeHistory(business_date=today), timeout=45),
+        pvh_coro,
         _safe(nepse.getLiveMarket(),           timeout=30),
         _safe(nepse.getSummary(),              timeout=30),
         _safe(nepse.getTopGainers(),           timeout=30),
@@ -188,23 +199,21 @@ async def get_live_data() -> dict:
         _safe(nepse.getDailyNepseIndexGraph(), timeout=30),
     )
 
-    # If pvh (the main data source) failed, reset the singleton so next call
-    # gets a fresh session/token — stale sessions cause persistent timeouts
-    if isinstance(pvh_raw, Exception):
-        logger.warning("pvh failed — resetting AsyncNepse instance for next call")
+    # Only reset the singleton on pvh failure during market hours — outside
+    # market hours the call is skipped so no reset needed.
+    if market_open and isinstance(pvh_raw, Exception):
+        logger.warning("pvh failed during market hours — resetting AsyncNepse instance")
         _nepse_instance = None
 
     pvh_list  = _to_list(pvh_raw)
     live_list = _to_list(live_raw)
 
-    # Debug: show what came back
-    logger.info("getPriceVolumeHistory(date=%s) → %d rows | getLiveMarket → %d rows",
-                today, len(pvh_list), len(live_list))
-    if pvh_list and isinstance(pvh_list[0], dict):
-        logger.info("today-price fields: %s", list(pvh_list[0].keys()))
-        logger.info("today-price sample row: %s", pvh_list[0])   # full row for field name diagnosis
-    if isinstance(pvh_raw, Exception):
+    logger.info("pvh → %d rows | live → %d rows | market_open=%s",
+                len(pvh_list), len(live_list), market_open)
+    if market_open and isinstance(pvh_raw, Exception):
         logger.error("getPriceVolumeHistory ERROR: %s", pvh_raw)
+    if not pvh_list and live_list and isinstance(live_list[0], dict):
+        logger.debug("pvh empty — using live_list as stock source; fields: %s", list(live_list[0].keys()))
 
     # Real-time LTP overlay keyed by symbol
     live_map: dict = {}
@@ -215,14 +224,19 @@ async def get_live_data() -> dict:
                 live_map[sym] = row
 
     # ── Stocks ────────────────────────────────────────────────────────────
+    # When pvh is empty (market closed / weekend), fall back to live_list so
+    # the stocks table, top_turnovers, and top_volumes still have data.
+    source_list = pvh_list if pvh_list else live_list
+
     stocks: list = []
-    for s in pvh_list:
+    for s in source_list:
         if not isinstance(s, dict):
             continue
         try:
             sym  = (s.get("symbol") or s.get("securityName") or "").upper().strip()
             live = live_map.get(sym, {})
-            sid  = s.get("securityId") or s.get("id") or s.get("companyId")
+            sid  = (s.get("securityId") or s.get("id") or s.get("companyId")
+                    or live.get("securityId") or live.get("id"))
 
             # Cache symbol → ID for chart lookups (no extra API call needed)
             if sym and sid:
@@ -265,15 +279,15 @@ async def get_live_data() -> dict:
                     "change": change,
                     "change_pct": change_pct,
 
-                    # OHLCV — try every known field name variant
-                    "open":  _g(s, "openPrice",  "open",  "todayOpen"),
-                    "high":  _g(s, "highPrice",  "high",  "todayHigh"),
-                    "low":   _g(s, "lowPrice",   "low",   "todayLow"),
+                    # OHLCV — try every known field name variant (pvh and live field names)
+                    "open":  _g(s, "openPrice",  "open",  "todayOpen",  "openingPrice"),
+                    "high":  _g(s, "highPrice",  "high",  "todayHigh",  "highPrice"),
+                    "low":   _g(s, "lowPrice",   "low",   "todayLow",   "lowPrice"),
                     "prev_close": prev_close,
                     "volume":   _g(s, "totalTradeQuantity", "totalTradedQuantity",
-                                      "volume", t=int),
-                    "trades":   _g(s, "totalTrades", "tradeCount", t=int),
-                    "turnover": _g(s, "totalTradeValue", "totalTradedValue", "turnover"),
+                                      "volume", "tradedQuantity", t=int),
+                    "trades":   _g(s, "totalTrades", "tradeCount", "numberOfTransactions", t=int),
+                    "turnover": _g(s, "totalTradeValue", "totalTradedValue", "turnover", "tradedValue"),
                 })
         except Exception as exc:
             logger.debug("Stock parse error [%s]: %s", s.get("symbol"), exc)
@@ -362,6 +376,13 @@ async def get_live_data() -> dict:
         reverse=True
     )[:10]
 
+    # ── Top Volume ────────────────────────────────────────────────────────
+    top_volumes = sorted(
+        [s for s in stocks if s.get("volume", 0) > 0],
+        key=lambda s: s["volume"],
+        reverse=True
+    )[:10]
+
     result = {
         "market_open":   is_market_open(),
         "market_status": get_market_status(),
@@ -372,6 +393,7 @@ async def get_live_data() -> dict:
         "gainers":       _movers(gainers_raw),
         "losers":        _movers(losers_raw),
         "top_turnovers": top_turnovers,
+        "top_volumes":   top_volumes,
         "nepse_chart":   _to_list(nepse_chart_raw),
         "stale":         False,
     }
@@ -379,6 +401,17 @@ async def get_live_data() -> dict:
     # Only update cache when we got real stock data
     if stocks:
         _last_good_response = result
+
+    # When market is closed today's pvh is empty — serve last session's data
+    if not stocks and _last_good_response:
+        stale = dict(_last_good_response)
+        stale["stale"] = True
+        stale["market_open"]   = result["market_open"]
+        stale["market_status"] = result["market_status"]
+        stale["timestamp"]     = result["timestamp"]
+        stale["index"]         = result["index"] if result["index"] else stale.get("index", {})
+        stale["nepse_chart"]   = result["nepse_chart"] if result["nepse_chart"] else stale.get("nepse_chart", [])
+        return stale
 
     return result
 
