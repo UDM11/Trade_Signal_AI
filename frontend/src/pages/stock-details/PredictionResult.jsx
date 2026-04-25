@@ -457,7 +457,7 @@ export default function PredictionResult({ result }) {
                         <BarChart2 className="w-3.5 h-3.5 text-slate-500" />
                         <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Technical Snapshot</p>
                     </div>
-                    <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                         {rsi      != null && <IndPill label="RSI (14)"  value={rsi.toFixed(1)} status={rsiStatus} />}
                         {macd     != null && <IndPill label="MACD Hist" value={macd > 0 ? `+${macd.toFixed(3)}` : macd.toFixed(3)} status={macdStatus} />}
                         <IndPill label="vs MA50"  value={aboveMa50  ? 'Above' : 'Below'} status={ma50Status} />

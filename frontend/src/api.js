@@ -19,6 +19,12 @@ export const api = {
     getHistory: async () => {
         return axios.get(`${API_BASE}/predictions`);
     },
+    getPredictions: async () => {
+        return axios.get(`${API_BASE}/predictions`);
+    },
+    runPredictions: async (symbols = null) => {
+        return axios.post(`${API_BASE}/predictions/run`, symbols);
+    },
 
     // ── NEPSE Live Market ───────────────────────────────────────────────────
     getNepseLive: async () => {

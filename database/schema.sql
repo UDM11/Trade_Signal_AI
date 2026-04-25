@@ -39,4 +39,14 @@ ALTER TABLE predictions ADD COLUMN IF NOT EXISTS risk_reward FLOAT;
 ALTER TABLE predictions ADD COLUMN IF NOT EXISTS all_proba JSONB;
 ALTER TABLE predictions ADD COLUMN IF NOT EXISTS indicators JSONB;
 ALTER TABLE predictions ADD COLUMN IF NOT EXISTS model_metrics JSONB;
-ALTER TABLE predictions ADD COLUMN IF NOT EXISTS ai_analysis JSONB;
+CREATE TABLE IF NOT EXISTS daily_ohlcv (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stock_id UUID REFERENCES stocks(id) ON DELETE CASCADE,
+    date DATE NOT NULL,
+    open FLOAT,
+    high FLOAT,
+    low FLOAT,
+    close FLOAT,
+    volume FLOAT,
+    UNIQUE(stock_id, date)
+);

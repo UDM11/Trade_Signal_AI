@@ -5,10 +5,15 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import classification_report, accuracy_score
 from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.model_selection import RandomizedSearchCV
 import joblib
 import os
+import glob
+from datetime import datetime
 import xgboost as xgb
 import lightgbm as lgb
+
+import json
 
 # LightGBM is fitted via VotingClassifier which passes numpy arrays without
 # column names. This is harmless — suppress the sklearn compatibility warning.
@@ -18,7 +23,86 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-MODEL_PATH = "model_xgb.pkl"
+MODELS_DIR   = os.path.join(os.path.dirname(__file__), "models")
+REGISTRY_PATH = os.path.join(MODELS_DIR, "registry.json")
+os.makedirs(MODELS_DIR, exist_ok=True)
+
+def _load_registry() -> dict:
+    if os.path.exists(REGISTRY_PATH):
+        try:
+            with open(REGISTRY_PATH, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"active_model": "", "models": []}
+
+def _save_registry(registry: dict):
+    try:
+        with open(REGISTRY_PATH, 'w') as f:
+            json.dump(registry, f, indent=4)
+    except Exception:
+        pass
+
+def _get_latest_model_path() -> str:
+    registry = _load_registry()
+    active   = registry.get("active_model")
+    
+    if active and os.path.exists(os.path.join(MODELS_DIR, active)):
+        return os.path.join(MODELS_DIR, active)
+        
+    # Fallback to newest file if registry is empty/broken
+    models = glob.glob(os.path.join(MODELS_DIR, "model_xgb_*.pkl"))
+    if not models:
+        old_path = os.path.join(os.path.dirname(__file__), "model_xgb.pkl")
+        return old_path if os.path.exists(old_path) else ""
+    return max(models, key=os.path.getmtime)
+
+def _cleanup_old_models(keep: int = 5):
+    registry = _load_registry()
+    active   = registry.get("active_model")
+    models   = sorted(glob.glob(os.path.join(MODELS_DIR, "model_xgb_*.pkl")), key=os.path.getmtime, reverse=True)
+    
+    for old_model in models[keep:]:
+        fname = os.path.basename(old_model)
+        if fname == active: continue # Never delete the active model
+        try:
+            os.remove(old_model)
+        except Exception:
+            pass
+
+def _save_global_model(artifacts: dict):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename  = f"model_xgb_{timestamp}.pkl"
+    path      = os.path.join(MODELS_DIR, filename)
+    
+    # Extract metrics for registry
+    metrics = artifacts.get('metrics', {})
+    accuracy = metrics.get('accuracy', 0)
+    
+    joblib.dump(artifacts, path)
+    
+    # Update Registry
+    registry = _load_registry()
+    model_entry = {
+        "filename": filename,
+        "date": datetime.now().isoformat(),
+        "accuracy": accuracy,
+        "metrics": metrics,
+        "status": "staging"
+    }
+    
+    # Auto-promote if accuracy > 55% or it's the first model
+    if accuracy >= 55.0 or not registry["active_model"]:
+        model_entry["status"] = "active"
+        registry["active_model"] = filename
+        
+    registry["models"].append(model_entry)
+    # Keep only last 10 entries in registry
+    registry["models"] = registry["models"][-10:]
+    
+    _save_registry(registry)
+    _cleanup_old_models()
+    return path
 
 
 def _safe_float_array(df_or_series) -> np.ndarray:
@@ -257,7 +341,97 @@ def train_or_load_model(df: pd.DataFrame) -> dict:
         'test_start_idx': len(X_train),
         'metrics':        metrics,
     }
-    joblib.dump(artifacts, MODEL_PATH)
+    # No longer saving to disk here to prevent overwriting global models
+    # This acts as an ad-hoc trainer for specific symbol uploads.
+    return metrics, artifacts
+
+
+def tune_and_train_global_model(df: pd.DataFrame) -> dict:
+    """
+    Trains the universal global model using RandomizedSearchCV for hyperparameter tuning.
+    Saves the best model with a timestamp and cleans up old versions.
+    """
+    WARMUP = 26
+    if len(df) > WARMUP * 2:
+        df = df.iloc[WARMUP:].reset_index(drop=True)
+
+    df, threshold = assign_labels(df)
+
+    for f in FEATURES:
+        if f not in df.columns:
+            df[f] = 0.0
+
+    X = _safe_float_array(df[FEATURES])
+    y = df['Target'].values
+
+    if len(X) < 50:
+        raise ValueError("Global model requires at least 50 valid rows of cross-sectional data.")
+
+    missing_classes = set([0, 1, 2]) - set(np.unique(y))
+    for mc in missing_classes:
+        X = np.vstack([X, np.zeros(X.shape[1])])
+        y = np.append(y, mc)
+
+    le = LabelEncoder()
+    y_enc = le.fit_transform(y)
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    sample_weights = compute_sample_weight(class_weight='balanced', y=y_enc)
+
+    xgb_base = xgb.XGBClassifier(random_state=42, eval_metric='mlogloss', verbosity=0)
+    lgb_base = lgb.LGBMClassifier(random_state=42, verbosity=-1, force_row_wise=True)
+    
+    xgb_params = {
+        'n_estimators': [200, 400],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.04, 0.1]
+    }
+    
+    lgb_params = {
+        'n_estimators': [200, 400],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.04, 0.1]
+    }
+
+    # Use RandomizedSearchCV for efficient tuning
+    xgb_search = RandomizedSearchCV(xgb_base, xgb_params, n_iter=5, cv=3, scoring='accuracy', random_state=42, n_jobs=-1)
+    # XGBoost API handles sample_weight via fit params
+    fit_params = {'sample_weight': sample_weights} if xgb.__version__ >= '1.6' else {}
+    xgb_search.fit(X_scaled, y_enc, **fit_params)
+    best_xgb = xgb_search.best_estimator_
+
+    lgb_search = RandomizedSearchCV(lgb_base, lgb_params, n_iter=5, cv=3, scoring='accuracy', random_state=42, n_jobs=-1)
+    lgb_search.fit(X_scaled, y_enc, sample_weight=sample_weights)
+    best_lgb = lgb_search.best_estimator_
+
+    rf_model = RandomForestClassifier(n_estimators=300, max_depth=8, min_samples_split=5, min_samples_leaf=2, max_features='sqrt', random_state=42, n_jobs=-1)
+
+    ensemble = VotingClassifier(
+        estimators=[('xgb', best_xgb), ('lgb', best_lgb), ('rf', rf_model)],
+        voting='soft',
+        weights=[4, 3.5, 2.5],
+    )
+    ensemble.fit(X_scaled, y_enc, sample_weight=sample_weights)
+
+    metrics = {
+        'accuracy': round(xgb_search.best_score_ * 100, 2), # Using XGB CV score as proxy
+        'threshold_used': round(threshold * 100, 3),
+        'tuned_params_xgb': xgb_search.best_params_,
+        'tuned_params_lgb': lgb_search.best_params_
+    }
+
+    artifacts = {
+        'model':          ensemble,
+        'encoder':        le,
+        'scaler':         scaler,
+        'features':       FEATURES,
+        'test_start_idx': len(X), # We used the whole dataset
+        'metrics':        metrics,
+    }
+    
+    _save_global_model(artifacts)
     return metrics, artifacts
 
 
@@ -292,11 +466,15 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
     Returns (prediction, confidence_pct, backtest_stats, model_metrics, all_proba, all_signals).
     """
     if artifacts is None:
-        if not os.path.exists(MODEL_PATH):
+        latest_model = _get_latest_model_path()
+        if not latest_model:
             _, artifacts = train_or_load_model(df)
         else:
-            artifacts = joblib.load(MODEL_PATH)
-            if 'scaler' not in artifacts:
+            try:
+                artifacts = joblib.load(latest_model)
+                if 'scaler' not in artifacts:
+                    _, artifacts = train_or_load_model(df)
+            except Exception:
                 _, artifacts = train_or_load_model(df)
 
     model    = artifacts['model']

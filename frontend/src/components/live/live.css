@@ -1,0 +1,36 @@
+@keyframes flash-green {
+    0% { background-color: rgba(34, 197, 94, 0.2); }
+    100% { background-color: transparent; }
+}
+@keyframes flash-red {
+    0% { background-color: rgba(239, 68, 68, 0.2); }
+    100% { background-color: transparent; }
+}
+.flash-up { animation: flash-green 1s ease-out; }
+.flash-down { animation: flash-red 1s ease-out; }
+
+@keyframes countdown-ring {
+    from { stroke-dashoffset: 0; }
+    to   { stroke-dashoffset: 100; }
+}
+.countdown-ring {
+    animation: countdown-ring 5s linear infinite;
+    transform-origin: center;
+    transform: rotate(-90deg);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    height: 6px;
+    width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}

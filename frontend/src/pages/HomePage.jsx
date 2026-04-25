@@ -1,119 +1,18 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     Activity, Radio, TrendingUp, TrendingDown, BarChart2, DollarSign,
     Zap, ArrowRight, ChevronUp, ChevronDown, Wifi, WifiOff,
     BarChart3, Target, Shield, Brain, Layers,
 } from 'lucide-react';
-import { api } from '../api';
+import { fmt, fmtVol, chgColor } from '../utils/formatters';
+import StatCard from '../components/ui/StatCard';
+import MoverRow from '../components/ui/MoverRow';
+import FeatureCard from '../components/ui/FeatureCard';
+import { useMarketSocket } from '../hooks/useMarketSocket.jsx';
 
-const SURFACE  = 'rgba(8,15,26,0.8)';
-const BORDER   = 'rgba(255,255,255,0.07)';
+const SURFACE  = 'var(--color-glass)';
+const BORDER   = 'var(--color-glass-border)';
 
-function fmt(n, d = 2) {
-    if (n == null || isNaN(n)) return '—';
-    return Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-function fmtVol(n) {
-    if (!n) return '—';
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e7) return (n / 1e7).toFixed(2) + 'Cr';
-    if (n >= 1e5) return (n / 1e5).toFixed(2) + 'L';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return String(Math.round(n));
-}
-function chgColor(v) {
-    if (v > 0) return '#22c55e';
-    if (v < 0) return '#ef4444';
-    return '#64748b';
-}
-
-// ── Animated number ──────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, Icon, color, glow, border, trend }) {
-    return (
-        <div className="relative rounded-2xl overflow-hidden transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
-            style={{ background: SURFACE, border: `1px solid ${border}`, boxShadow: `0 4px 24px ${glow}` }}>
-            <div className="absolute top-0 left-0 right-0 h-px"
-                style={{ background: `linear-gradient(90deg, transparent, ${color}60, transparent)` }} />
-            <div className="p-5">
-                <div className="flex items-start justify-between mb-4">
-                    <div className="p-2.5 rounded-xl" style={{ background: glow, border: `1px solid ${border}` }}>
-                        <Icon className="w-4 h-4" style={{ color }} />
-                    </div>
-                    {trend != null && (
-                        <span className="flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-lg"
-                            style={{
-                                color: trend >= 0 ? '#22c55e' : '#ef4444',
-                                background: trend >= 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
-                                border: `1px solid ${trend >= 0 ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
-                            }}>
-                            {trend >= 0 ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                            {Math.abs(trend).toFixed(2)}%
-                        </span>
-                    )}
-                </div>
-                <p className="text-2xl font-black text-white tabular-nums leading-none mb-1">{value}</p>
-                <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>{label}</p>
-                {sub && <p className="text-[11px] mt-1" style={{ color: '#334155' }}>{sub}</p>}
-            </div>
-        </div>
-    );
-}
-
-// ── Mover row ────────────────────────────────────────────────────────────────
-function MoverRow({ stock, isGainer, rank, mode, onNavigate }) {
-    const isVolume   = mode === 'volume';
-    const isTurnover = mode === 'turnover';
-    const cc = isVolume ? '#8b5cf6' : isTurnover ? '#f59e0b' : chgColor(stock.change_pct);
-    return (
-        <button onClick={() => onNavigate('live', stock.symbol)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-left"
-            style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}
-            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-            onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.02)'}>
-            <span className="w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black shrink-0"
-                style={{ background: 'rgba(255,255,255,0.05)', color: '#475569' }}>{rank}</span>
-            <div className="flex-1 min-w-0">
-                <p className="text-xs font-black text-white truncate">{stock.symbol}</p>
-                <p className="text-[10px] tabular-nums" style={{ color: '#475569' }}>Rs. {fmt(stock.ltp)}</p>
-            </div>
-            <span className="text-sm font-black tabular-nums shrink-0" style={{ color: cc }}>
-                {isVolume   ? fmtVol(stock.volume)
-                : isTurnover ? `Rs.${fmtVol(stock.turnover)}`
-                : `${isGainer ? '+' : ''}${fmt(stock.change_pct)}%`}
-            </span>
-        </button>
-    );
-}
-
-// ── Feature card ─────────────────────────────────────────────────────────────
-function FeatureCard({ Icon, color, glow, border, title, desc, badge, onClick }) {
-    return (
-        <button onClick={onClick}
-            className="group relative rounded-2xl overflow-hidden text-left w-full transition-all duration-200 hover:-translate-y-1"
-            style={{ background: SURFACE, border: `1px solid ${border}`, boxShadow: `0 4px 24px ${glow}` }}>
-            <div className="absolute top-0 left-0 right-0 h-px"
-                style={{ background: `linear-gradient(90deg, transparent, ${color}50, transparent)` }} />
-            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                style={{ background: `radial-gradient(ellipse at top left, ${glow} 0%, transparent 60%)` }} />
-            <div className="relative p-6">
-                <div className="flex items-start justify-between mb-4">
-                    <div className="p-3 rounded-xl" style={{ background: glow, border: `1px solid ${border}` }}>
-                        <Icon className="w-5 h-5" style={{ color }} />
-                    </div>
-                    {badge && (
-                        <span className="text-[10px] font-black px-2 py-1 rounded-full uppercase tracking-wider"
-                            style={{ background: glow, color, border: `1px solid ${border}` }}>{badge}</span>
-                    )}
-                </div>
-                <h3 className="text-base font-black text-white mb-1.5">{title}</h3>
-                <p className="text-xs leading-relaxed" style={{ color: '#475569' }}>{desc}</p>
-                <div className="mt-4 flex items-center gap-1.5 text-xs font-bold" style={{ color }}>
-                    Open <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
-                </div>
-            </div>
-        </button>
-    );
-}
 
 // ── Skeleton bone ────────────────────────────────────────────────────────────
 function Bone({ w = 'w-full', h = 'h-4', extra = '' }) {
@@ -130,31 +29,34 @@ function BreadthBar({ adv, dec, unc }) {
     const decPct = (dec / total) * 100;
     const uncPct = 100 - advPct - decPct;
     return (
-        <div className="space-y-2">
-            <div className="flex items-center justify-between text-[10px] font-semibold" style={{ color: '#475569' }}>
-                <span>Market Breadth</span>
+        <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs font-black uppercase tracking-widest text-slate-400">
+                <span className="flex items-center gap-1.5"><Activity className="w-3.5 h-3.5" /> Market Breadth</span>
                 <span>{total} stocks</span>
             </div>
-            <div className="h-2 rounded-full overflow-hidden flex gap-px">
-                <div style={{ width: `${advPct}%`, background: '#22c55e', borderRadius: '4px 0 0 4px' }} />
-                <div style={{ width: `${uncPct}%`, background: '#475569' }} />
-                <div style={{ width: `${decPct}%`, background: '#ef4444', borderRadius: '0 4px 4px 0' }} />
+            <div className="relative h-2.5 w-full rounded-full overflow-hidden flex gap-0.5 bg-white/5 p-px">
+                <div className="relative h-full transition-all duration-1000 ease-out" style={{ width: `${advPct}%`, background: 'linear-gradient(90deg, #166534, #22c55e)', borderRadius: '99px', boxShadow: '0 0 10px rgba(34,197,94,0.4)' }} />
+                <div className="relative h-full transition-all duration-1000 ease-out" style={{ width: `${uncPct}%`, background: '#475569', borderRadius: '99px' }} />
+                <div className="relative h-full transition-all duration-1000 ease-out" style={{ width: `${decPct}%`, background: 'linear-gradient(90deg, #ef4444, #991b1b)', borderRadius: '99px', boxShadow: '0 0 10px rgba(239,68,68,0.4)' }} />
             </div>
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-400">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />{adv} Up
+            <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-4">
+                    <span className="flex items-center gap-1.5 text-xs font-black text-emerald-400 drop-shadow-sm">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />{adv} Up
                     </span>
-                    <span className="flex items-center gap-1 text-[11px] font-bold" style={{ color: '#475569' }}>
-                        <span className="w-2 h-2 rounded-full bg-slate-500" />{unc} Flat
+                    <span className="flex items-center gap-1.5 text-xs font-black text-slate-500">
+                        <span className="w-2 h-2 rounded-full bg-slate-600" />{unc} Flat
                     </span>
-                    <span className="flex items-center gap-1 text-[11px] font-bold text-red-400">
-                        <span className="w-2 h-2 rounded-full bg-red-400" />{dec} Down
+                    <span className="flex items-center gap-1.5 text-xs font-black text-red-400 drop-shadow-sm">
+                        <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />{dec} Down
                     </span>
                 </div>
-                <span className="text-[11px] font-black" style={{ color: adv >= dec ? '#22c55e' : '#ef4444' }}>
-                    {Math.round((adv / total) * 100)}% advancing
-                </span>
+                <div className="text-right">
+                    <span className="text-sm font-black tabular-nums drop-shadow-md" style={{ color: adv >= dec ? '#22c55e' : '#ef4444' }}>
+                        {Math.round((adv / total) * 100)}%
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-bold uppercase block -mt-1 tracking-wider">{adv >= dec ? 'Bullish' : 'Bearish'}</span>
+                </div>
             </div>
         </div>
     );
@@ -162,26 +64,14 @@ function BreadthBar({ adv, dec, unc }) {
 
 // ── Main HomePage ─────────────────────────────────────────────────────────────
 export default function HomePage({ setPage }) {
-    const [data,      setData]      = useState(null);
-    const [loading,   setLoading]   = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
+    const [loading, setLoading] = useState(true);
 
-    const fetchData = useCallback(async (isRefresh = false) => {
-        if (isRefresh) setRefreshing(true);
-        try {
-            const res = await api.getNepseLive();
-            if (!res.data?.error) setData(res.data);
-        } catch { /* silent */ } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
+    const { marketData: data, connected } = useMarketSocket();
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    // Once socket sends first payload, stop showing skeleton
     useEffect(() => {
-        const id = setInterval(() => fetchData(true), 5_000);
-        return () => clearInterval(id);
-    }, [fetchData]);
+        if (data) setLoading(false);
+    }, [data]);
 
     // Navigate to live page and optionally open a stock
     const goLive = (symbol) => {
@@ -216,39 +106,45 @@ export default function HomePage({ setPage }) {
         return (
             <main className="max-w-7xl mx-auto space-y-6">
                 {/* Hero skeleton */}
-                <div className="rounded-2xl p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6"
-                    style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
-                    <div className="space-y-3 flex-1">
-                        <div className="flex items-center gap-3">
+                <div className="rounded-3xl p-6 sm:p-10 flex flex-col sm:flex-row sm:items-center justify-between gap-8"
+                    style={{ background: 'rgba(15,25,50,0.4)', border: `1px solid ${BORDER}` }}>
+                    <div className="space-y-4 flex-1">
+                        <div className="flex items-center gap-3 mb-2">
                             <Bone w="w-10" h="h-10" extra="rounded-xl" />
-                            <Bone w="w-32" h="h-7" extra="rounded-xl" />
+                            <Bone w="w-32" h="h-8" extra="rounded-xl" />
                         </div>
-                        <Bone w="w-64" h="h-9" />
-                        <Bone w="w-48" h="h-5" />
-                        <Bone w="w-80" h="h-4" />
+                        <Bone w="w-3/4 sm:w-80" h="h-10" />
+                        <Bone w="w-1/2 sm:w-64" h="h-5" />
+                        <div className="flex gap-3 pt-3">
+                            <Bone w="w-28" h="h-10" extra="rounded-xl" />
+                            <Bone w="w-32" h="h-10" extra="rounded-xl" />
+                        </div>
                     </div>
-                    <div className="rounded-2xl p-5 space-y-3 min-w-[200px]" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                        <Bone w="w-20" h="h-3" />
-                        <Bone w="w-36" h="h-10" />
-                        <Bone w="w-28" h="h-7" extra="rounded-lg" />
+                    <div className="rounded-3xl p-6 space-y-4 min-w-[240px]" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                        <Bone w="w-24" h="h-3" />
+                        <Bone w="w-40" h="h-12" />
+                        <Bone w="w-32" h="h-8" extra="rounded-xl" />
                     </div>
                 </div>
                 {/* Stats skeleton */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     {[...Array(4)].map((_, i) => (
-                        <div key={i} className="rounded-2xl p-5 space-y-3" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+                        <div key={i} className="rounded-2xl p-5 space-y-4" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
                             <div className="flex justify-between"><Bone w="w-10" h="h-10" extra="rounded-xl" /><Bone w="w-16" h="h-6" extra="rounded-lg" /></div>
-                            <Bone w="w-28" h="h-7" />
-                            <Bone w="w-20" h="h-3" />
+                            <Bone w="w-32" h="h-8" />
+                            <Bone w="w-24" h="h-3" />
                         </div>
                     ))}
                 </div>
                 {/* Movers skeleton */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
                     {[...Array(4)].map((_, i) => (
-                        <div key={i} className="rounded-2xl p-5 space-y-3" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
-                            <Bone w="w-32" h="h-4" />
-                            {[...Array(5)].map((_, j) => <Bone key={j} h="h-10" extra="rounded-xl" />)}
+                        <div key={i} className="rounded-2xl p-5 space-y-4" style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
+                            <div className="flex justify-between border-b border-white/5 pb-3">
+                                <Bone w="w-32" h="h-5" />
+                                <Bone w="w-16" h="h-4" />
+                            </div>
+                            {[...Array(5)].map((_, j) => <Bone key={j} h="h-11" extra="rounded-xl" />)}
                         </div>
                     ))}
                 </div>
@@ -260,64 +156,87 @@ export default function HomePage({ setPage }) {
         <main className="max-w-7xl mx-auto space-y-6">
 
             {/* ── Hero header ─────────────────────────────────────────────── */}
-            <div className="relative rounded-2xl overflow-hidden p-6 sm:p-8"
-                style={{ background: 'linear-gradient(135deg, rgba(8,15,26,0.95) 0%, rgba(15,25,50,0.95) 100%)', border: `1px solid ${BORDER}` }}>
-                <div className="absolute inset-0 pointer-events-none"
-                    style={{ background: 'radial-gradient(ellipse at 80% 50%, rgba(59,130,246,0.06) 0%, transparent 60%)' }} />
-                <div className="absolute top-0 left-0 right-0 h-px"
-                    style={{ background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.4), transparent)' }} />
+            <div className="group relative rounded-3xl overflow-hidden p-6 sm:p-10 shadow-2xl transition-all duration-500 hover:shadow-blue-500/10"
+                style={{ 
+                    background: 'linear-gradient(135deg, rgba(10,17,32,0.95) 0%, rgba(15,25,50,0.98) 100%)', 
+                    border: `1px solid rgba(59,130,246,0.15)` 
+                }}>
+                {/* Immersive background glow */}
+                <div className="absolute inset-0 pointer-events-none opacity-50 group-hover:opacity-100 transition-opacity duration-700"
+                    style={{ background: 'radial-gradient(ellipse at 85% 10%, rgba(59,130,246,0.15) 0%, transparent 50%)' }} />
+                <div className="absolute top-0 left-0 right-0 h-[2px] opacity-70"
+                    style={{ background: 'linear-gradient(90deg, transparent, rgba(59,130,246,0.8), transparent)' }} />
 
-                <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                    <div>
-                        <div className="flex items-center gap-3 mb-3">
-                            <div className="p-2.5 rounded-xl" style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.25)' }}>
+                <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-8 z-10">
+                    <div className="max-w-xl">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="p-2.5 rounded-xl shadow-[0_0_15px_rgba(59,130,246,0.3)] transition-transform duration-300 group-hover:scale-110" 
+                                style={{ background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)' }}>
                                 <Activity className="w-5 h-5 text-blue-400" />
                             </div>
-                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl backdrop-blur-sm shadow-sm transition-all duration-300 group-hover:shadow-md"
                                 style={{ background: mktBg, border: `1px solid ${mktBorder}` }}>
                                 {isOpen || isPreOpen
-                                    ? <Wifi className="w-3.5 h-3.5" style={{ color: mktColor }} />
+                                    ? <Wifi className="w-3.5 h-3.5 animate-pulse" style={{ color: mktColor }} />
                                     : <WifiOff className="w-3.5 h-3.5" style={{ color: mktColor }} />}
-                                <span className="text-xs font-black tracking-wide" style={{ color: mktColor }}>
+                                <span className="text-[11px] font-black tracking-widest uppercase drop-shadow-sm" style={{ color: mktColor }}>
                                     MARKET {status || (isOpen ? 'OPEN' : 'CLOSED')}
                                 </span>
-                                {(isOpen || isPreOpen) && <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: mktColor }} />}
                             </div>
                         </div>
-                        <h1 className="text-3xl sm:text-4xl font-black text-white leading-tight mb-2">
+                        <h1 className="text-4xl sm:text-5xl font-black text-white leading-[1.1] mb-3 tracking-tight">
                             Nepal Stock Exchange
-                            <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">
+                            <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-cyan-400 to-teal-400 drop-shadow-sm mt-1">
                                 Market Overview
                             </span>
                         </h1>
-                        <p className="text-sm" style={{ color: '#475569' }}>
-                            Real-time NEPSE data · AI-powered trade signals · Live market analytics
+                        <p className="text-sm sm:text-base font-medium text-slate-400 max-w-md leading-relaxed">
+                            Real-time NEPSE data streaming, AI-powered trade signals, and live market breadth analytics.
                         </p>
+                        
+                        {/* Quick action buttons */}
+                        <div className="flex items-center gap-3 mt-6">
+                            <button onClick={() => setPage('dashboard')} className="px-5 py-2.5 rounded-xl text-sm font-black text-white shadow-[0_4px_20px_rgba(37,99,235,0.3)] transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
+                                style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}>
+                                <Brain className="w-4 h-4" /> AI Signals
+                            </button>
+                            <button onClick={() => goLive()} className="px-5 py-2.5 rounded-xl text-sm font-black transition-all hover:scale-105 active:scale-95 flex items-center gap-2 hover:bg-white/10"
+                                style={{ background: 'rgba(255,255,255,0.05)', color: '#cbd5e1', border: '1px solid rgba(255,255,255,0.1)' }}>
+                                <Radio className="w-4 h-4" /> Live Market
+                            </button>
+                        </div>
                     </div>
 
                     {/* NEPSE Index hero block */}
                     {index?.value ? (
-                        <div className="shrink-0 rounded-2xl p-5 min-w-[200px]"
-                            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                            <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: '#475569' }}>NEPSE Index</p>
-                            <p className="text-4xl font-black text-white tabular-nums leading-none">{fmt(index.value)}</p>
-                            <div className="flex items-center gap-2 mt-2">
-                                <span className="flex items-center gap-1 text-sm font-black px-2.5 py-1 rounded-lg tabular-nums"
+                        <div className="shrink-0 rounded-3xl p-6 min-w-[240px] w-full sm:w-auto relative overflow-hidden group/idx transition-transform hover:-translate-y-1 hover:shadow-2xl"
+                            style={{ 
+                                background: 'rgba(255,255,255,0.02)', 
+                                border: '1px solid rgba(255,255,255,0.05)',
+                                boxShadow: 'inset 0 0 20px rgba(0,0,0,0.2)'
+                            }}>
+                            <div className="absolute inset-0 opacity-0 group-hover/idx:opacity-100 transition-opacity duration-500 pointer-events-none"
+                                style={{ background: `radial-gradient(circle at top right, ${idxUp ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)'}, transparent 70%)` }} />
+                            
+                            <p className="text-[10px] font-black uppercase tracking-widest mb-1 relative z-10 text-slate-400">NEPSE Index</p>
+                            <p className="text-5xl font-black text-white tabular-nums leading-none tracking-tight relative z-10 drop-shadow-md">{fmt(index.value)}</p>
+                            
+                            <div className="flex items-center gap-2 mt-4 relative z-10">
+                                <span className="flex items-center gap-1.5 text-sm font-black px-3 py-1.5 rounded-xl tabular-nums shadow-sm"
                                     style={{
                                         color: idxColor,
-                                        background: idxUp ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-                                        border: `1px solid ${idxUp ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                                        background: idxUp ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                                        border: `1px solid ${idxUp ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
                                     }}>
-                                    {idxUp ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                    {idxUp ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                                     {idxUp ? '+' : ''}{fmt(index.change)} ({idxUp ? '+' : ''}{fmt(index.change_pct)}%)
                                 </span>
                             </div>
-                            <div className="mt-3" />
                         </div>
                     ) : (
-                        <div className="shrink-0 rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                            <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: '#475569' }}>NEPSE Index</p>
-                            <p className="text-3xl font-black" style={{ color: '#1e293b' }}>—</p>
+                        <div className="shrink-0 rounded-3xl p-6 w-full sm:w-auto min-w-[240px]" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            <p className="text-[10px] font-black uppercase tracking-widest mb-2 text-slate-500">NEPSE Index</p>
+                            <p className="text-4xl font-black text-slate-700">—</p>
                         </div>
                     )}
                 </div>
@@ -361,38 +280,47 @@ export default function HomePage({ setPage }) {
             )}
 
             {/* ── Top movers ──────────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
                 {[
-                    { title: 'Top Gainers',  Icon: TrendingUp,   color: '#22c55e', glow: 'rgba(34,197,94,0.08)',   border: 'rgba(34,197,94,0.18)',   list: gainers,   isGainer: true,  mode: 'pct'      },
-                    { title: 'Top Losers',   Icon: TrendingDown, color: '#ef4444', glow: 'rgba(239,68,68,0.08)',   border: 'rgba(239,68,68,0.18)',   list: losers,    isGainer: false, mode: 'pct'      },
-                    { title: 'Top Turnover', Icon: DollarSign,   color: '#f59e0b', glow: 'rgba(245,158,11,0.08)',  border: 'rgba(245,158,11,0.18)',  list: turnovers, isGainer: null,  mode: 'turnover' },
-                    { title: 'Top Volume',   Icon: BarChart2,    color: '#8b5cf6', glow: 'rgba(139,92,246,0.08)',  border: 'rgba(139,92,246,0.18)',  list: volumes,   isGainer: null,  mode: 'volume'   },
+                    { title: 'Top Gainers',  Icon: TrendingUp,   color: '#22c55e', glow: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.2)',   list: gainers,   isGainer: true,  mode: 'pct'      },
+                    { title: 'Top Losers',   Icon: TrendingDown, color: '#ef4444', glow: 'rgba(239,68,68,0.1)',   border: 'rgba(239,68,68,0.2)',   list: losers,    isGainer: false, mode: 'pct'      },
+                    { title: 'Top Turnover', Icon: DollarSign,   color: '#f59e0b', glow: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.2)',  list: turnovers, isGainer: null,  mode: 'turnover' },
+                    { title: 'Top Volume',   Icon: BarChart2,    color: '#8b5cf6', glow: 'rgba(139,92,246,0.1)',  border: 'rgba(139,92,246,0.2)',  list: volumes,   isGainer: null,  mode: 'volume'   },
                 ].map(({ title, Icon, color, glow, border, list, isGainer, mode }) => (
-                    <div key={title} className="rounded-2xl overflow-hidden"
+                    <div key={title} className="group/card relative rounded-2xl overflow-hidden transition-all duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)] hover:-translate-y-0.5"
                         style={{ background: SURFACE, border: `1px solid ${BORDER}` }}>
-                        <div className="absolute-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${color}40, transparent)` }} />
-                        <div className="px-4 pt-4 pb-3 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-                            <div className="flex items-center gap-2.5">
-                                <div className="p-1.5 rounded-lg" style={{ background: glow, border: `1px solid ${border}` }}>
-                                    <Icon className="w-3.5 h-3.5" style={{ color }} />
+                        <div className="absolute top-0 left-0 right-0 h-[2px] opacity-60 transition-opacity duration-300 group-hover/card:opacity-100" 
+                            style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)` }} />
+                        
+                        <div className="px-5 pt-5 pb-3 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 rounded-xl transition-transform duration-300 group-hover/card:scale-110 group-hover/card:shadow-lg" 
+                                    style={{ background: glow, border: `1px solid ${border}`, boxShadow: `0 0 10px ${glow}` }}>
+                                    <Icon className="w-4 h-4 drop-shadow-md" style={{ color }} />
                                 </div>
-                                <span className="text-sm font-black text-white">{title}</span>
+                                <span className="text-sm font-black text-white tracking-wide">{title}</span>
                             </div>
                             <button onClick={() => goLive()}
-                                className="flex items-center gap-1 text-[10px] font-bold transition-colors"
-                                style={{ color: '#334155' }}
+                                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest transition-all hover:scale-105"
+                                style={{ color: '#475569' }}
                                 onMouseEnter={e => e.currentTarget.style.color = color}
-                                onMouseLeave={e => e.currentTarget.style.color = '#334155'}>
+                                onMouseLeave={e => e.currentTarget.style.color = '#475569'}>
                                 View all <ArrowRight className="w-3 h-3" />
                             </button>
                         </div>
-                        <div className="p-3 space-y-1.5">
+                        <div className="p-3 space-y-1 relative z-10">
                             {list.length > 0 ? list.map((s, i) => (
                                 <MoverRow key={s.symbol} stock={s} isGainer={isGainer} rank={i + 1} mode={mode} onNavigate={goLive} />
                             )) : (
-                                <div className="py-6 text-center text-xs" style={{ color: '#334155' }}>No data</div>
+                                <div className="py-8 flex flex-col items-center justify-center text-center opacity-50">
+                                    <Activity className="w-6 h-6 mb-2 text-slate-500" />
+                                    <span className="text-xs font-bold text-slate-400">No data available</span>
+                                </div>
                             )}
                         </div>
+                        {/* Soft backdrop radial glow inside the card */}
+                        <div className="absolute inset-0 pointer-events-none opacity-0 group-hover/card:opacity-100 transition-opacity duration-500"
+                            style={{ background: `radial-gradient(circle at 50% 100%, ${glow}, transparent 60%)` }} />
                     </div>
                 ))}
             </div>

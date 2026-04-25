@@ -17,3 +17,4 @@ xlrd>=2.0.1
 lightgbm>=4.0.0
 requests>=2.31.0
 git+https://github.com/basic-bgnr/NepseUnofficialApi
+apscheduler>=3.10.0

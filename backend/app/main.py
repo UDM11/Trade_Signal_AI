@@ -1,4 +1,5 @@
 import os
+import asyncio
 from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,8 @@ from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 from app.limiter import limiter
 from app.routes.api import router
+from app.services.socket_manager import manager, market_broadcast_task
+from fastapi import WebSocket, WebSocketDisconnect
 
 load_dotenv()
 
@@ -30,10 +33,36 @@ app.add_middleware(
 # API routes — must be registered BEFORE the static file catch-all
 app.include_router(router, prefix="/api")
 
+@app.websocket("/ws/market")
+async def websocket_market(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive; client just waits for broadcasts
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
 
 @app.get("/api/health")
 def health():
     return {"status": "ok", "message": "Trade Signal AI is running."}
+
+
+# ── Scheduler lifecycle (Disabled as per user request for manual-only scans) ───────────────────
+from app.services.scheduler import scheduler
+
+@app.on_event("startup")
+async def _startup():
+    # start_scheduler() # Disabled automatic daily scan
+    asyncio.create_task(market_broadcast_task())
+
+@app.on_event("shutdown")
+async def _shutdown():
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
 
 
 # Serve the built React frontend for every non-API route.

@@ -383,9 +383,18 @@ async def get_live_data() -> dict:
         reverse=True
     )[:10]
 
+    # ── Public Holiday / Unexpected Closure Detection ────────────────────
+    # If is_market_open() says True (Mon-Fri, 11AM-3PM) but the NEPSE API
+    # returns NO live data, it means the exchange is closed for a public
+    # holiday or an unexpected suspension. Override status accordingly.
+    actually_open = market_open and len(live_list) > 0
+    effective_status = get_market_status() if actually_open else (
+        "HOLIDAY" if market_open else get_market_status()
+    )
+
     result = {
-        "market_open":   is_market_open(),
-        "market_status": get_market_status(),
+        "market_open":   actually_open,
+        "market_status": effective_status,
         "timestamp":     _npt_now().isoformat(),
         "index":         index,
         "summary":       summary,
@@ -406,8 +415,8 @@ async def get_live_data() -> dict:
     if not stocks and _last_good_response:
         stale = dict(_last_good_response)
         stale["stale"] = True
-        stale["market_open"]   = result["market_open"]
-        stale["market_status"] = result["market_status"]
+        stale["market_open"]   = actually_open          # correct: False on holiday
+        stale["market_status"] = effective_status       # correct: HOLIDAY / CLOSED
         stale["timestamp"]     = result["timestamp"]
         stale["index"]         = result["index"] if result["index"] else stale.get("index", {})
         stale["nepse_chart"]   = result["nepse_chart"] if result["nepse_chart"] else stale.get("nepse_chart", [])
@@ -423,6 +432,45 @@ async def get_stock_chart(symbol: str) -> dict:
     built when get_live_data() was last called.
     """
     symbol = symbol.upper().strip()
+
+    async def get_db_data(sym: str):
+        try:
+            from app.services.supabase_client import get_supabase
+            supabase = get_supabase()
+            if not supabase: return []
+            stock_res = supabase.table("stocks").select("id").eq("symbol", sym).execute()
+            if not stock_res.data: return []
+            stock_id = stock_res.data[0]["id"]
+            ohlcv_res = supabase.table("daily_ohlcv").select("*").eq("stock_id", stock_id).order("date", desc=False).execute()
+            if not ohlcv_res.data: return []
+            return [{
+                "time": r["date"],
+                "open": float(r.get("open") or 0),
+                "high": float(r.get("high") or 0),
+                "low": float(r.get("low") or 0),
+                "close": float(r.get("close") or 0),
+                "value": float(r.get("volume") or r.get("total_traded_quantity") or r.get("traded_quantity") or 0),
+            } for r in ohlcv_res.data]
+        except Exception as e:
+            logger.error("Supabase data fetch failed: %s", e)
+            return []
+    
+    if symbol == 'NEPSE':
+        # Use the dedicated helper which handles CSV + Chukul API merge
+        raw_history = await get_nepse_history()
+        # Convert volume key to 'value' for chart compatibility
+        processed = []
+        for d in raw_history:
+            processed.append({
+                "time":  d["time"],
+                "open":  d["open"],
+                "high":  d["high"],
+                "low":   d["low"],
+                "close": d["close"],
+                "value": d.get("volume") or d.get("value") or 0
+            })
+        return {"symbol": "NEPSE", "chart_data": processed, "count": len(processed)}
+
     nepse  = await _client()
 
     # Resolve security ID from cache (populated by get_live_data)
@@ -455,61 +503,87 @@ async def get_stock_chart(symbol: str) -> dict:
 
     logger.info("Chart request: symbol=%s  security_id=%s", symbol, security_id)
 
-    # Takes symbol string (calls .upper() internally — NOT the numeric ID)
+    # 1. Fetch from Supabase (Our own reliable history)
+    db_data = await get_db_data(symbol)
+    
+    # 2. Fetch from API (Live/Recent data)
+    api_data = []
     try:
-        # Pass a very old start_date to force NEPSE to return all available historical data
-        chart_raw = await asyncio.wait_for(
-            nepse.getCompanyPriceVolumeHistory(symbol, start_date="2000-01-01"),
-            timeout=30,
-        )
-    except asyncio.TimeoutError:
-        return {"error": "Chart fetch timed out.", "symbol": symbol,
-                "chart_data": [], "count": 0}
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        
+        # The "Trick": Fetch in multiple chunks because the API often limits single requests
+        # We'll try to fetch the last 6 years in 2-year segments
+        chunks = [
+            (now - timedelta(days=365*2), now),
+            (now - timedelta(days=365*4), now - timedelta(days=365*2 + 1)),
+            (now - timedelta(days=365*6), now - timedelta(days=365*4 + 1)),
+        ]
+        
+        for start_dt, end_dt in chunks:
+            s_str = start_dt.strftime("%Y-%m-%d")
+            e_str = end_dt.strftime("%Y-%m-%d")
+            logger.info("Fetching history chunk for %s: %s to %s", symbol, s_str, e_str)
+            
+            # Some versions of the library expect the Symbol string, not the numeric ID
+            chart_raw = await asyncio.wait_for(
+                nepse.getCompanyPriceVolumeHistory(symbol, start_date=s_str, end_date=e_str),
+                timeout=15,
+            )
+            rows = _to_list(chart_raw)
+            if not rows: continue
+            
+            for row in rows:
+                if not isinstance(row, dict): continue
+                date_str = (row.get("businessDate") or row.get("date") or row.get("tradeDate") or "")[:10]
+                if not date_str: continue
+                api_data.append({
+                    "time":  date_str,
+                    "open":  _g(row, "openPrice", "open", "todayOpen"),
+                    "high":  _g(row, "highPrice", "high", "todayHigh"),
+                    "low":   _g(row, "lowPrice",  "low",  "todayLow"),
+                    "close": _g(row, "closePrice", "close", "lastTradedPrice"),
+                    "value": _g(row, "totalTradedQuantity", "totalTradeQuantity", "tradedQuantity", "volume", t=float),
+                })
+            
+            # Small delay to avoid triggering rate limits
+            await asyncio.sleep(0.5)
+
     except Exception as e:
-        logger.error("getCompanyPriceVolumeHistory(%s) error: %s", symbol, e)
-        return {"error": str(e), "symbol": symbol, "chart_data": [], "count": 0}
+        logger.warning("Iterative API chart fetch for %s failed: %s", symbol, e)
 
-    rows = _to_list(chart_raw)
-    logger.info("getCompanyPriceVolumeHistory(%s) → %d rows", symbol, len(rows))
-    if rows and isinstance(rows[0], dict):
-        logger.info("Chart row fields: %s", list(rows[0].keys()))
+    # 3. Merge Data (Prioritize API for matching dates, but keep Supabase for history)
+    merged_map = {d["time"]: d for d in db_data}
+    for d in api_data:
+        merged_map[d["time"]] = d
+        
+    final_data = sorted(merged_map.values(), key=lambda d: d["time"])
+    
+    if final_data:
+        logger.info("Chart data range for %s: %s to %s (%d rows)", 
+                    symbol, final_data[0]["time"], final_data[-1]["time"], len(final_data))
+    else:
+        return {"error": "No data available from API or Database", "symbol": symbol, "chart_data": [], "count": 0}
 
-    chart_data = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        try:
-            date_str = (
-                row.get("businessDate") or row.get("date") or
-                row.get("tradeDate")    or row.get("eodDate") or ""
-            )[:10]
-            if not date_str:
-                continue
-            chart_data.append({
-                "time":  date_str,
-                "open":  _s(row.get("openPrice")   or row.get("open")),
-                "high":  _s(row.get("highPrice")   or row.get("high")),
-                "low":   _s(row.get("lowPrice")    or row.get("low")),
-                "close": _s(row.get("closePrice")  or row.get("close")
-                             or row.get("closingPrice")),
-                "value": _s(row.get("tradedQuantity") or row.get("volume")
-                             or row.get("totalTradedQuantity")),
-            })
-        except Exception:
-            continue
-
-    chart_data.sort(key=lambda d: d["time"])
-
+    # 4. Post-process (Fix missing open prices)
     # NEPSE company history endpoint often omits openPrice
-    # We can approximate it using the previous day's close
-    for i in range(1, len(chart_data)):
-        if chart_data[i]["open"] == 0 and chart_data[i-1]["close"] > 0:
-            chart_data[i]["open"] = chart_data[i-1]["close"]
+    # We approximate it using the previous day's close
+    for i in range(len(final_data)):
+        if final_data[i]["open"] == 0:
+            if i > 0 and final_data[i-1]["close"] > 0:
+                final_data[i]["open"] = final_data[i-1]["close"]
+            else:
+                final_data[i]["open"] = final_data[i]["close"]
+        
+        # Ensure high/low are valid relative to open/close
+        final_data[i]["high"] = max(final_data[i]["high"], final_data[i]["open"], final_data[i]["close"])
+        if final_data[i]["low"] == 0:
+             final_data[i]["low"] = min(final_data[i]["open"], final_data[i]["close"])
+        else:
+             final_data[i]["low"] = min(final_data[i]["low"], final_data[i]["open"], final_data[i]["close"])
 
-    if chart_data and chart_data[0]["open"] == 0:
-        chart_data[0]["open"] = chart_data[0]["close"]
-
-    return {"symbol": symbol, "chart_data": chart_data, "count": len(chart_data)}
+    logger.info("Successfully merged data for %s: %d total rows", symbol, len(final_data))
+    return {"symbol": symbol, "chart_data": final_data, "count": len(final_data)}
 
 
 async def get_live_quote(symbol: str) -> dict:
