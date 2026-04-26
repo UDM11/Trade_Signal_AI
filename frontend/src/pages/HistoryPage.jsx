@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
     Search, RefreshCw, SlidersHorizontal, AlertCircle,
     Activity, TrendingUp, Target, Shield
@@ -39,6 +39,8 @@ function buildResult(record) {
     };
 }
 
+const REFRESH_SEC = 1;
+
 export default function HistoryPage() {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -46,27 +48,39 @@ export default function HistoryPage() {
     const [filterSignal, setFilterSignal] = useState('ALL');
     const [sortBy, setSortBy] = useState('date');
     const [selected, setSelected] = useState(null);
+    const [lastRefreshed, setLastRefreshed] = useState(null);
+    const [countdown, setCountdown] = useState(REFRESH_SEC);
+    const countdownRef = useRef(REFRESH_SEC);
 
-    const fetchHistory = async (isBackground = false) => {
+    const fetchHistory = useCallback(async (isBackground = false) => {
         if (!isBackground) setLoading(true);
         try {
             const res = await api.getHistory();
             setHistory(res.data.data || []);
+            setLastRefreshed(new Date());
+            countdownRef.current = REFRESH_SEC;
+            setCountdown(REFRESH_SEC);
         } catch (e) {
-            console.error("Failed to fetch history:", e);
+            console.error('Failed to fetch history:', e);
         } finally {
             if (!isBackground) setLoading(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchHistory();
-        // Setup automatic background refresh every 10 seconds
-        const interval = setInterval(() => {
-            fetchHistory(true);
-        }, 10000);
-        return () => clearInterval(interval);
-    }, []);
+        // Auto-refresh every REFRESH_SEC seconds
+        const refreshTimer = setInterval(() => fetchHistory(true), REFRESH_SEC * 1000);
+        // Countdown ticker every second
+        const tickTimer = setInterval(() => {
+            countdownRef.current = Math.max(0, countdownRef.current - 1);
+            setCountdown(countdownRef.current);
+        }, 1000);
+        return () => {
+            clearInterval(refreshTimer);
+            clearInterval(tickTimer);
+        };
+    }, [fetchHistory]);
 
     const filteredHistory = useMemo(() => {
         let list = history.filter(r => {

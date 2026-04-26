@@ -33,6 +33,6 @@ primary_region = 'bom'
     hard_limit = 50
 
 [[vm]]
-  memory   = "512mb"
+  memory   = "1024mb"
   cpu_kind = "shared"
   cpus     = 1

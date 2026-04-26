@@ -253,7 +253,7 @@ export default function SignalPage({ initialRecord }) {
 
     useEffect(() => {
         fetchData();
-        const tid = setInterval(() => fetchData(true), 10000);
+        const tid = setInterval(() => fetchData(true), 1000);
         return () => clearInterval(tid);
     }, [fetchData]);
 
