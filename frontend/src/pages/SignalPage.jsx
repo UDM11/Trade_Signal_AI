@@ -66,7 +66,7 @@ function SignalCard({ record, onClick, active }) {
     const sig    = record.prediction;
     const sym    = record.stocks?.symbol || record.symbol || '?';
     const conf   = record.confidence_score ?? record.confidence ?? 0;
-    const confPct = (conf * 100).toFixed(1);
+    const confPct = Number(conf).toFixed(1);
     const rr     = record.risk_reward ?? null;
     const tp     = record.target_pct ?? null;
     const colors = getSignalColors(sig);
@@ -253,7 +253,7 @@ export default function SignalPage({ initialRecord }) {
 
     useEffect(() => {
         fetchData();
-        const tid = setInterval(() => fetchData(true), 1000);
+        const tid = setInterval(() => fetchData(true), 10000);
         return () => clearInterval(tid);
     }, [fetchData]);
 

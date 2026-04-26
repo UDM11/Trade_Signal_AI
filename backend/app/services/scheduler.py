@@ -95,7 +95,7 @@ def _build_indicators_summary(latest) -> dict:
     }
 
 
-async def _save_to_db(symbol: str, payload: dict) -> None:
+async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> None:
     """Upsert prediction to Supabase and always mirror to local JSON."""
     from app.routes.api import _upsert_local
     from app.services.supabase_client import get_supabase
@@ -103,6 +103,7 @@ async def _save_to_db(symbol: str, payload: dict) -> None:
     supabase = get_supabase()
     if supabase:
         try:
+            # 1. Resolve or Create Stock entry
             stock_res = supabase.table("stocks").select("id").eq("symbol", symbol).execute()
             if not stock_res.data:
                 ins_res  = supabase.table("stocks").insert({"symbol": symbol}).execute()
@@ -110,6 +111,33 @@ async def _save_to_db(symbol: str, payload: dict) -> None:
             else:
                 stock_id = stock_res.data[0]["id"]
 
+            # 2. Sync OHLCV History (The "1 Year Data" requested by user)
+            if df is not None and not df.empty:
+                try:
+                    ohlcv_batch = []
+                    # Only sync last 400 rows to save time/bandwidth (covers > 1 year)
+                    sync_df = df.tail(400) 
+                    for _, row in sync_df.iterrows():
+                        d_str = row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"])[:10]
+                        ohlcv_batch.append({
+                            "stock_id": stock_id,
+                            "date":     d_str,
+                            "open":     float(row.get("Open", 0)),
+                            "high":     float(row.get("High", 0)),
+                            "low":      float(row.get("Low", 0)),
+                            "close":    float(row.get("Close", 0)),
+                            "volume":   float(row.get("Volume", 0)),
+                        })
+                    
+                    if ohlcv_batch:
+                        # Use upsert with on_conflict if your table has a unique(stock_id, date) constraint.
+                        # Otherwise, this might create duplicates unless the table is handled carefully.
+                        # Standard trade-signal schema uses (stock_id, date) as unique.
+                        supabase.table("daily_ohlcv").upsert(ohlcv_batch, on_conflict="stock_id,date").execute()
+                except Exception as e:
+                    logger.warning("[%s] OHLCV sync failed (skipping): %s", symbol, e)
+
+            # 3. Update Prediction entry
             existing = supabase.table("predictions").select("id").eq("stock_id", stock_id).execute()
             if existing.data:
                 supabase.table("predictions").update(payload).eq("stock_id", stock_id).execute()
@@ -228,7 +256,7 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
             "created_at":    datetime.now(timezone.utc).isoformat(),
         }
 
-        await _save_to_db(symbol, payload)
+        await _save_to_db(symbol, payload, df=df)
         logger.info("[AUTO] %s → %s (%.1f%%)", symbol, prediction, confidence)
         return prediction
 

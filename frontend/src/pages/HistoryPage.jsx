@@ -39,7 +39,7 @@ function buildResult(record) {
     };
 }
 
-const REFRESH_SEC = 1;
+const REFRESH_SEC = 10;
 
 export default function HistoryPage() {
     const [history, setHistory] = useState([]);
