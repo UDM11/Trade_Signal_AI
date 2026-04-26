@@ -4,7 +4,10 @@ import {
     CandlestickSeries, LineSeries, HistogramSeries,
     createSeriesMarkers,
 } from "lightweight-charts";
-import { Maximize2, Minimize2, TrendingUp, TrendingDown, Minus, RotateCcw } from "lucide-react";
+import { 
+    Maximize2, Minimize2, TrendingUp, TrendingDown, Minus, RotateCcw, 
+    Loader2, ChevronDown, Clock, BrainCircuit, Cpu, Crosshair, Target, Shield, X 
+} from "lucide-react";
 
 // ─── Indicator math ────────────────────────────────────────────────────────────
 
@@ -198,10 +201,50 @@ function filterByDays(data, days) {
     }
 }
 
+function resampleData(data, minutes) {
+    if (!data?.length || minutes <= 1) return data;
+    const resampled = [];
+    let currentCandle = null;
+    
+    data.forEach((d) => {
+        // Convert time to numeric timestamp if it's a string
+        const timestamp = typeof d.time === 'string' ? Math.floor(new Date(d.time).getTime() / 1000) : d.time;
+        const groupSeconds = minutes * 60;
+        const groupTime = Math.floor(timestamp / groupSeconds) * groupSeconds;
+
+        if (!currentCandle || currentCandle.time !== groupTime) {
+            if (currentCandle) resampled.push(currentCandle);
+            currentCandle = {
+                time: groupTime,
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close,
+                value: d.value || 0
+            };
+        } else {
+            currentCandle.high = Math.max(currentCandle.high, d.high);
+            currentCandle.low = Math.min(currentCandle.low, d.low);
+            currentCandle.close = d.close;
+            currentCandle.value += (d.value || 0);
+        }
+    });
+    if (currentCandle) resampled.push(currentCandle);
+    return resampled;
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TFS = [
-    { label: "1W", days: 7 }, { label: "1M", days: 30 }, { label: "3M", days: 90 },
-    { label: "6M", days: 180 }, { label: "1Y", days: 365 }, { label: "ALL", days: null },
+    { label: "1m",  days: 1, type: "intraday", resample: 1 },
+    { label: "5m",  days: 1, type: "intraday", resample: 5 },
+    { label: "15m", days: 1, type: "intraday", resample: 15 },
+    { label: "1h",  days: 1, type: "intraday", resample: 60 },
+    { label: "1W",  days: 7 }, 
+    { label: "1M",  days: 30 }, 
+    { label: "3M",  days: 90 },
+    { label: "6M",  days: 180 }, 
+    { label: "1Y",  days: 365 }, 
+    { label: "ALL", days: null },
 ];
 const CHART_TYPES = [
     { key: "candle", label: "C",  title: "Candlestick"  },
@@ -239,7 +282,7 @@ const lineOpt = (color, w = 1.5, style = 0) => ({
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TradingChart({
-    data, liveCandle, prediction, signalHistory, defaultChartType = "candle",
+    symbol, data, liveCandle, stockLtp, prediction, signalHistory, explanation, defaultChartType = "candle",
     targetPrice, stopLoss, estimatedDays, targetPct, stopLossPct, riskReward,
     idealEntry, entryZoneLow, entryZoneHigh, target2, target2Pct, trailingStop,
 }) {
@@ -263,11 +306,51 @@ export default function TradingChart({
     const [subInd,      setSubInd]      = useState("rsi");
     const [ohlcv,       setOhlcv]       = useState(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [intradayData, setIntradayData] = useState([]);
+    const [loadingIntraday, setLoadingIntraday] = useState(false);
+
+    const tfObj = useMemo(() => TFS.find(t => t.label === tf), [tf]);
+
+    // Fetch 1m data when any intraday timeframe is selected
+    useEffect(() => {
+        const isIntraday = tfObj?.type === "intraday";
+        if (isIntraday && symbol && !intradayData.length) {
+            const fetch1m = async () => {
+                setLoadingIntraday(true);
+                try {
+                    const { api } = await import("../../api");
+                    const res = await api.getNepseIntraday(symbol);
+                    const raw = res.data.chart_data || [];
+                    
+                    // Robust date parsing (handles space or T separators)
+                    const normalized = raw.map(d => {
+                        let t = d.time;
+                        if (typeof t === 'string') {
+                            // Replace space with T for standard ISO format if needed
+                            const isoStr = t.includes(' ') ? t.replace(' ', 'T') : t;
+                            t = Math.floor(new Date(isoStr).getTime() / 1000);
+                        }
+                        return { ...d, time: t };
+                    }).filter(d => !isNaN(d.time)); // Remove any invalid dates
+                    
+                    setIntradayData(normalized);
+                } catch (e) {
+                    console.error("Failed to fetch 1m data", e);
+                } finally {
+                    setLoadingIntraday(false);
+                }
+            };
+            fetch1m();
+        }
+    }, [tf, symbol, intradayData.length]);
 
     const filteredData = useMemo(() => {
-        const tfObj = TFS.find(t => t.label === tf);
+        if (tfObj?.type === "intraday") {
+            // Only return intraday if we actually have data
+            return intradayData.length > 0 ? resampleData(intradayData, tfObj.resample) : [];
+        }
         return filterByDays(data ?? [], tfObj?.days);
-    }, [data, tf]);
+    }, [data, tf, intradayData, tfObj]);
 
     const last = data?.[data.length - 1];
     const prev = data?.[data.length - 2] ?? last;
@@ -317,6 +400,25 @@ export default function TradingChart({
         window.addEventListener("keydown", fn);
         return () => window.removeEventListener("keydown", fn);
     }, [toggleFullscreen]);
+
+    // ── Live LTP Sync (Keep chart in sync with header) ────────────────────────
+    useEffect(() => {
+        if (!S.current.candle || !filteredData || filteredData.length === 0 || !stockLtp) return;
+        
+        const lastCandle = filteredData[filteredData.length - 1];
+        // Ensure we only update if it's the current session's bar (approximate check)
+        // This makes the chart feel "Live"
+        try {
+            S.current.candle.update({
+                ...lastCandle,
+                close: stockLtp,
+                high: Math.max(lastCandle.high, stockLtp),
+                low: Math.min(lastCandle.low, stockLtp),
+            });
+        } catch (e) {
+            console.warn("Live update failed", e);
+        }
+    }, [stockLtp, filteredData]);
 
     // ── Chart init (once per data load) ───────────────────────────────────────
     useEffect(() => {
@@ -451,7 +553,8 @@ export default function TradingChart({
     useEffect(() => {
         if (!S.current.candle || !data?.length) return;
         const filtered = filteredData;
-        if (!filtered.length) return;
+        
+        // Removed the "if (!filtered.length) return" so the chart clears when switching
 
         // Chart type
         const candleData = chartType === "ha" ? calcHeikinAshi(filtered) : filtered.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }));
@@ -583,9 +686,15 @@ export default function TradingChart({
         if (prediction && filtered.length) {
             const lastBar = filtered[filtered.length - 1];
             const ei = markers.findIndex(m => m.time === lastBar.time);
-            const lm = prediction === "BUY"  ? { time: lastBar.time, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: "AI BUY",  size: 2 }
-                     : prediction === "SELL" ? { time: lastBar.time, position: "aboveBar", color: "#ef5350", shape: "arrowDown", text: "AI SELL", size: 2 }
-                     :                         { time: lastBar.time, position: "aboveBar", color: "#eab308", shape: "circle",    text: "HOLD",    size: 1 };
+            
+            // Extract a short reason from explanation if available (first 30 chars)
+            const reason = explanation ? (explanation.length > 35 ? explanation.substring(0, 32) + "..." : explanation) : null;
+            const signalText = prediction === "BUY" ? "AI BUY" : prediction === "SELL" ? "AI SELL" : "HOLD";
+            const markerText = reason ? `${signalText}: ${reason}` : signalText;
+
+            const lm = prediction === "BUY"  ? { time: lastBar.time, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: markerText,  size: 2 }
+                     : prediction === "SELL" ? { time: lastBar.time, position: "aboveBar", color: "#ef5350", shape: "arrowDown", text: markerText, size: 2 }
+                     :                         { time: lastBar.time, position: "aboveBar", color: "#eab308", shape: "circle",    text: "HOLD",      size: 1 };
             if (ei >= 0) markers[ei] = lm; else markers.push(lm);
         }
 
@@ -597,6 +706,16 @@ export default function TradingChart({
 
         if (prevTf.current !== tf || !hasFitContent.current) {
             mainChart.current?.timeScale().fitContent();
+            
+            // Adjust time visibility for intraday
+            const isIntraday = tfObj?.type === "intraday";
+            mainChart.current?.applyOptions({
+                timeScale: {
+                    timeVisible: isIntraday,
+                    secondsVisible: false,
+                }
+            });
+            
             prevTf.current = tf;
             hasFitContent.current = true;
         }
@@ -659,240 +778,211 @@ export default function TradingChart({
             style={{ background: BG, fontFamily: "Inter,system-ui,sans-serif" }}>
 
             {/* ── Stats bar ──────────────────────────────────────────────────── */}
-            <div className="flex items-center gap-3 px-4 py-2 border-b shrink-0 flex-wrap gap-y-1.5" style={{ borderColor: BORDER }}>
-
-                {/* Price + change */}
-                <div className="flex items-center gap-2">
-                    <span className="text-lg font-black tabular-nums" style={{ color: isUp ? "#26a69a" : "#ef5350" }}>
-                        Rs.&nbsp;{fmt(ohlcv?.close ?? last?.close)}
-                    </span>
-                    <span className="text-xs font-bold px-2 py-0.5 rounded" style={{ background: isUp ? "rgba(38,166,154,0.12)" : "rgba(239,83,80,0.12)", color: isUp ? "#26a69a" : "#ef5350" }}>
-                        {isUp ? "▲" : "▼"} {Math.abs(chg).toFixed(2)} ({isUp ? "+" : ""}{chgPct}%)
-                    </span>
+            <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-2 sm:py-3 border-b shrink-0 flex-wrap backdrop-blur-md bg-white/5" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
+                
+                {/* Symbol + Sector */}
+                <div className="flex items-center gap-2 sm:gap-3">
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-md sm:rounded-lg bg-blue-600 flex items-center justify-center font-black text-white text-[9px] sm:text-xs shadow-lg shadow-blue-500/20">
+                        {symbol?.substring(0,2)}
+                    </div>
+                    <div>
+                        <h1 className="text-xs sm:text-sm font-black text-white tracking-tighter leading-none uppercase">{symbol}</h1>
+                        <span className="text-[7px] sm:text-[9px] font-bold text-slate-500 uppercase tracking-widest block mt-0.5">Equity</span>
+                    </div>
                 </div>
 
-                <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.07)" }} />
+                <div className="hidden xs:block h-5 sm:h-6 w-px bg-white/10" />
 
-                {/* OHLV row */}
-                {ohlcv ? (
-                    <span className="text-xs font-mono" style={{ color: ohlcv.up ? "#26a69a" : "#ef5350" }}>
-                        O&nbsp;{fmt(ohlcv.open)}&nbsp; H&nbsp;{fmt(ohlcv.high)}&nbsp; L&nbsp;{fmt(ohlcv.low)}&nbsp; C&nbsp;<strong>{fmt(ohlcv.close)}</strong>&nbsp; V&nbsp;{Math.round(ohlcv.volume).toLocaleString()}
-                    </span>
-                ) : (
-                    <div className="flex items-center gap-3 text-xs" style={{ color: "#4a6080" }}>
-                        <span>H <span style={{ color: "#94a3b8" }}>{fmt(last?.high)}</span></span>
-                        <span>L <span style={{ color: "#94a3b8" }}>{fmt(last?.low)}</span></span>
-                        <span>V <span style={{ color: "#94a3b8" }}>{Math.round(last?.value ?? 0).toLocaleString()}</span></span>
-                        {atrVal != null && <span>ATR <span style={{ color: "#94a3b8" }}>{fmt(atrVal)}</span></span>}
-                    </div>
-                )}
-
-                <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.07)" }} />
-
-                {/* 52W stats */}
-                {stats52w && (
-                    <div className="flex items-center gap-3 text-xs" style={{ color: "#4a6080" }}>
-                        <span>52W H <span style={{ color: "#22c55e" }}>{fmt(stats52w.high)}</span></span>
-                        <span>52W L <span style={{ color: "#ef4444" }}>{fmt(stats52w.low)}</span></span>
-                    </div>
-                )}
-
-                {/* RSI pill */}
-                {rsiNow != null && (
-                    <>
-                        <div style={{ width: 1, height: 16, background: "rgba(255,255,255,0.07)" }} />
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                            style={{ background: `${rsiColor}14`, color: rsiColor, border: `1px solid ${rsiColor}30` }}>
-                            RSI {rsiNow.toFixed(1)}{rsiNow > 70 ? " OB" : rsiNow < 30 ? " OS" : ""}
+                {/* Price + change */}
+                <div className="flex flex-col">
+                    <div className="flex items-baseline gap-1.5 sm:gap-2">
+                        <span className="text-sm sm:text-xl font-black tabular-nums leading-none" style={{ color: isUp ? "#10b981" : "#ef4444" }}>
+                            {fmt(ohlcv?.close ?? last?.close)}
                         </span>
-                    </>
-                )}
+                        <span className={`text-[9px] sm:text-[11px] font-black ${isUp ? 'text-buy' : 'text-sell'}`}>
+                            {isUp ? "▲" : "▼"} {isUp ? "+" : ""}{chgPct}%
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 overflow-hidden whitespace-nowrap">
+                        {ohlcv ? (
+                             <div className="flex items-center gap-1.5 text-[7px] sm:text-[9px] font-black uppercase tracking-wider text-slate-500">
+                                <span>O <span className="text-slate-300">{fmt(ohlcv.open, 1)}</span></span>
+                                <span>H <span className="text-slate-300">{fmt(ohlcv.high, 1)}</span></span>
+                                <span>L <span className="text-slate-300">{fmt(ohlcv.low, 1)}</span></span>
+                             </div>
+                        ) : (
+                            <div className="flex items-center gap-1.5 text-[7px] sm:text-[9px] font-black uppercase tracking-wider text-slate-500">
+                                <span>52W H <span className="text-buy">{fmt(stats52w?.high, 0)}</span></span>
+                                <span>52W L <span className="text-sell">{fmt(stats52w?.low, 0)}</span></span>
+                            </div>
+                        )}
+                    </div>
+                </div>
 
-                {/* Chart type badge */}
-                {chartType !== "candle" && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                        style={{ background: "rgba(59,130,246,0.12)", color: "#60a5fa", border: "1px solid rgba(59,130,246,0.25)" }}>
-                        {chartType === "ha" ? "HEIKIN-ASHI" : "LINE"}
-                    </span>
-                )}
+                <div className="hidden sm:block flex-1" />
 
-                {/* LIVE badge — shown when real-time candle is active */}
-                {liveCandle && (
-                    <span className="flex items-center gap-1.5 text-[10px] font-bold px-2 py-0.5 rounded"
-                        style={{ background: "rgba(34,197,94,0.1)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.25)" }}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                        LIVE
-                    </span>
-                )}
-
-                {/* Spacer — pushes signal + fullscreen to far right */}
-                <div style={{ flex: 1 }} />
-
-                {/* Signal badge */}
+                {/* AI Sentiment */}
                 {prediction && (
-                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg border font-black text-xs tracking-widest"
-                        style={{ background: `${sigColor}14`, borderColor: `${sigColor}40`, color: sigColor }}>
-                        <SigIcon style={{ width: 12, height: 12 }} />
+                    <div className="flex items-center gap-1.5 sm:gap-3 px-2 sm:px-4 py-1 sm:py-1.5 rounded-lg sm:rounded-xl border font-black text-[8px] sm:text-xs tracking-widest shadow-xl"
+                        style={{ background: `${sigColor}10`, borderColor: `${sigColor}40`, color: sigColor }}>
+                        <BrainCircuit className="w-3 h-3 sm:w-4 sm:h-4" />
                         {prediction}
                     </div>
                 )}
 
-                {/* Fullscreen — always pinned to right */}
-                <button onClick={toggleFullscreen} title={`${isFullscreen ? "Exit" : "Enter"} fullscreen (F)`}
-                    className="p-1.5 rounded-md transition-colors hover:bg-white/5" style={{ color: "#4a6080" }}>
-                    {isFullscreen ? <Minimize2 style={{ width: 14, height: 14 }} /> : <Maximize2 style={{ width: 14, height: 14 }} />}
+                {/* Fullscreen */}
+                <button onClick={toggleFullscreen} className="p-1.5 sm:p-2 rounded-lg transition-all hover:bg-white/10 text-slate-400 hover:text-white">
+                    {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
                 </button>
             </div>
 
             {/* ── Toolbar ────────────────────────────────────────────────────── */}
-            <div className="flex items-center flex-wrap gap-1.5 px-3 py-2 border-b shrink-0" style={{ borderColor: BORDER }}>
-
+            <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 border-b shrink-0 bg-[#080f1a]" style={{ borderColor: 'rgba(255,255,255,0.03)' }}>
+                
                 {/* Chart types */}
-                <div className="flex rounded overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                    {CHART_TYPES.map((ct, i) => (
-                        <button key={ct.key} title={ct.title} onClick={() => setChartType(ct.key)}
-                            style={{
-                                padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                                borderRight: i < CHART_TYPES.length - 1 ? `1px solid ${BORDER}` : "none",
-                                background: chartType === ct.key ? "rgba(59,130,246,0.22)" : "transparent",
-                                color:      chartType === ct.key ? "#60a5fa" : "#4a6080",
-                            }}>
+                <div className="flex bg-black/40 rounded-md sm:rounded-lg p-0.5 border border-white/5">
+                    {CHART_TYPES.map((ct) => (
+                        <button key={ct.key} onClick={() => setChartType(ct.key)}
+                            className={`px-2 sm:px-3 py-0.5 sm:py-1 text-[8px] sm:text-[10px] font-black uppercase tracking-wider rounded transition-all ${chartType === ct.key ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>
                             {ct.label}
                         </button>
                     ))}
                 </div>
 
-                <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.06)" }} />
+                <div className="h-4 w-px bg-white/5 mx-0.5 sm:mx-1" />
 
                 {/* Timeframes */}
-                <div className="flex rounded overflow-hidden" style={{ border: `1px solid ${BORDER}` }}>
-                    {TFS.map((t, i) => (
-                        <button key={t.label} onClick={() => setTf(t.label)}
-                            style={{
-                                padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                                borderRight: i < TFS.length - 1 ? `1px solid ${BORDER}` : "none",
-                                background: tf === t.label ? "#3b82f6" : "transparent",
-                                color:      tf === t.label ? "#fff"    : "#4a6080",
-                            }}>
-                            {t.label}
+                <div className="relative group">
+                    <button className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all">
+                        <Clock size={10} className="text-blue-400" />
+                        <span className="text-[8px] sm:text-[10px] font-black text-white">{tf}</span>
+                        <ChevronDown size={8} className="text-slate-500" />
+                    </button>
+                    <div className="absolute top-full left-0 mt-1 w-24 sm:w-32 bg-[#0d1526] border border-white/5 rounded-lg sm:rounded-xl shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden py-1">
+                        {TFS.map((t) => (
+                            <button key={t.label} onClick={() => setTf(t.label)}
+                                className={`w-full text-left px-3 sm:px-4 py-1.5 sm:py-2 text-[8px] sm:text-[10px] font-black uppercase tracking-widest ${tf === t.label ? 'text-blue-400 bg-blue-400/5' : 'text-slate-400 hover:text-white hover:bg-white/5'}`}>
+                                {t.label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="h-4 w-px bg-white/5 mx-0.5 sm:mx-1" />
+
+                {/* Overlays */}
+                <div className="flex gap-1 sm:gap-1.5">
+                    {OVERLAYS.slice(0, 4).map(({ key, label, color }) => (
+                        <button key={key} onClick={() => toggleOverlay(key)}
+                            className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 text-[7px] sm:text-[9px] font-black uppercase tracking-widest rounded border transition-all ${overlay[key] ? 'border-transparent text-white' : 'border-white/5 text-slate-500 hover:text-slate-300'}`}
+                            style={{ background: overlay[key] ? color : 'transparent' }}>
+                            {label}
                         </button>
                     ))}
                 </div>
 
-                <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.06)" }} />
+                <div className="flex-1" />
 
-                {/* Overlays */}
-                {OVERLAYS.map(({ key, label, color }) => (
-                    <Btn key={key} onClick={() => toggleOverlay(key)} active={overlay[key]} color={color} title={`Toggle ${label}`}>
-                        {label}
-                    </Btn>
-                ))}
-
-                <div style={{ width: 1, height: 18, background: "rgba(255,255,255,0.06)" }} />
-
-                {/* Sub-panel indicators */}
-                {SUB_PANELS.map(({ key, label, color }) => (
-                    <Btn key={key} onClick={() => toggleSub(key)} active={subInd === key} color={color} title={`${label} panel`}>
-                        {label}
-                    </Btn>
-                ))}
-                {subInd && (
-                    <button onClick={() => setSubInd(null)}
-                        style={{ padding: "3px 8px", borderRadius: 5, fontSize: 11, border: `1px solid ${BORDER}`, background: "transparent", color: "#475569", cursor: "pointer" }}>
-                        ✕
-                    </button>
-                )}
-
-                {/* Spacer + Reset */}
-                <div style={{ flex: 1 }} />
-                <button onClick={() => mainChart.current?.timeScale().fitContent()} title="Reset zoom (R)"
-                    className="p-1.5 rounded hover:bg-white/5 transition-colors" style={{ color: "#4a6080" }}>
-                    <RotateCcw style={{ width: 13, height: 13 }} />
+                <button onClick={() => mainChart.current?.timeScale().fitContent()} className="p-1 sm:p-2 rounded-lg text-slate-500 hover:text-white transition-colors">
+                    <RotateCcw size={12} />
                 </button>
             </div>
 
             {/* ── Indicator legend ───────────────────────────────────────────── */}
             {(overlay.sma20 || overlay.sma50 || overlay.ema200 || overlay.ema9 || overlay.ema21 || overlay.bb || overlay.vwap || overlay.ich) && (
-                <div className="flex items-center flex-wrap gap-x-4 gap-y-0.5 px-4 py-1.5 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
-                    {overlay.sma20  && legendVals.sma20  != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#3b82f6" }}>MA20 {fmt(legendVals.sma20)}</span>}
-                    {overlay.sma50  && legendVals.sma50  != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#f59e0b" }}>MA50 {fmt(legendVals.sma50)}</span>}
-                    {overlay.ema200 && legendVals.ema200 != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#e879f9" }}>EMA200 {fmt(legendVals.ema200)}</span>}
-                    {overlay.ema9   && legendVals.ema9   != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa" }}>EMA9 {fmt(legendVals.ema9)}</span>}
-                    {overlay.ema21  && legendVals.ema21  != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#ec4899" }}>EMA21 {fmt(legendVals.ema21)}</span>}
-                    {overlay.vwap   && legendVals.vwap   != null && <span style={{ fontSize: 11, fontWeight: 700, color: "#14b8a6" }}>VWAP {fmt(legendVals.vwap)}</span>}
-                    {overlay.bb     && <span style={{ fontSize: 11, fontWeight: 700, color: "#6366f1" }}>BB(20,2)</span>}
-                    {overlay.ich    && <span style={{ fontSize: 11, fontWeight: 700, color: "#22c55e" }}>ICH — <span style={{ color: "#0ea5e9" }}>Tenkan</span> · <span style={{ color: "#f43f5e" }}>Kijun</span></span>}
+                <div className="flex items-center flex-wrap gap-2 sm:gap-4 px-3 sm:px-5 py-1 sm:py-2 shrink-0 bg-[#040a15] border-b border-white/5">
+                    {overlay.sma20  && legendVals.sma20  != null && <IndicatorLegend label="MA20" value={fmt(legendVals.sma20)} color="#3b82f6" />}
+                    {overlay.sma50  && legendVals.sma50  != null && <IndicatorLegend label="MA50" value={fmt(legendVals.sma50)} color="#f59e0b" />}
+                    {overlay.ema200 && legendVals.ema200 != null && <IndicatorLegend label="EMA200" value={fmt(legendVals.ema200)} color="#e879f9" />}
+                    {overlay.vwap   && legendVals.vwap   != null && <IndicatorLegend label="VWAP" value={fmt(legendVals.vwap)} color="#14b8a6" />}
                 </div>
             )}
 
             {/* ── Main chart area ────────────────────────────────────────────── */}
-            <div ref={mainRef} style={{ width: "100%", flex: showSub ? "0 0 62%" : "1 1 auto" }} />
-
-            {/* ── Sub-panel ──────────────────────────────────────────────────── */}
-            <div style={{ height: showSub ? "23%" : "0", overflow: "hidden", borderTop: showSub ? `1px solid ${BORDER}` : "none" }} className="shrink-0">
-                {showSub && (
-                    <div className="flex items-center gap-3 px-4 pt-1.5 pb-1">
-                        {subInd === "rsi"   && <><span style={{ fontSize: 10, fontWeight: 700, color: "#22d3ee" }}>RSI (14)</span><span style={{ fontSize: 10, color: "rgba(239,68,68,0.7)" }}>— OB 70</span><span style={{ fontSize: 10, color: "rgba(34,197,94,0.7)" }}>— OS 30</span>{rsiNow != null && <span style={{ fontSize: 10, fontWeight: 700, color: rsiColor }}>&nbsp;Current: {rsiNow.toFixed(1)}</span>}</>}
-                        {subInd === "macd"  && <><span style={{ fontSize: 10, fontWeight: 700, color: "#f472b6" }}>MACD (12,26,9)</span><span style={{ fontSize: 10, color: "#fb923c" }}>— Signal</span><span style={{ fontSize: 10, color: "#64748b" }}>&nbsp;▮ Hist</span></>}
-                        {subInd === "stoch" && <><span style={{ fontSize: 10, fontWeight: 700, color: "#fb7185" }}>STOCH (14,3)</span><span style={{ fontSize: 10, color: "#fbbf24" }}>— %D</span><span style={{ fontSize: 10, color: "rgba(239,68,68,0.7)" }}>— OB 80</span><span style={{ fontSize: 10, color: "rgba(34,197,94,0.7)" }}>— OS 20</span></>}
-                        {subInd === "adx"   && <><span style={{ fontSize: 10, fontWeight: 700, color: "#f97316" }}>ADX (14)</span><span style={{ fontSize: 10, color: "#22c55e" }}>— +DI</span><span style={{ fontSize: 10, color: "#ef4444" }}>— -DI</span><span style={{ fontSize: 10, color: "rgba(255,255,255,0.2)" }}>— Trend threshold 25</span></>}
-                        {subInd === "obv"   && <><span style={{ fontSize: 10, fontWeight: 700, color: "#10b981" }}>OBV</span><span style={{ fontSize: 10, color: "#64748b" }}>&nbsp;On Balance Volume — rising = accumulation</span></>}
-                        {subInd === "cci"   && <><span style={{ fontSize: 10, fontWeight: 700, color: "#a78bfa" }}>CCI (20)</span><span style={{ fontSize: 10, color: "rgba(239,68,68,0.7)" }}>— +100 OB</span><span style={{ fontSize: 10, color: "rgba(34,197,94,0.7)" }}>— -100 OS</span></>}
-                        {subInd === "wr"    && <><span style={{ fontSize: 10, fontWeight: 700, color: "#fb923c" }}>Williams %R (14)</span><span style={{ fontSize: 10, color: "rgba(239,68,68,0.7)" }}>— -20 OB</span><span style={{ fontSize: 10, color: "rgba(34,197,94,0.7)" }}>— -80 OS</span></>}
+            <div className="relative overflow-hidden flex-1" style={{ width: "100%", minHeight: "200px" }}>
+                <div ref={mainRef} style={{ width: "100%", height: "100%" }} />
+                
+                {loadingIntraday && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md z-20">
+                        <div className="relative">
+                            <div className="w-12 h-12 rounded-full border-2 border-blue-500/20 border-t-blue-500 animate-spin" />
+                            <Cpu className="absolute inset-0 m-auto w-5 h-5 text-blue-500 animate-pulse" />
+                        </div>
+                        <span className="text-[10px] font-black text-blue-400 uppercase tracking-[0.3em] mt-4">Syncing Intraday</span>
                     </div>
                 )}
-                <div ref={subRef} style={{ width: "100%", height: "calc(100% - 28px)" }} />
             </div>
 
-            {/* ── AI Levels bar ──────────────────────────────────────────────── */}
-            {(targetPrice || stopLoss) && (
-                <div className="flex items-center flex-wrap justify-around gap-x-5 gap-y-1 px-4 py-2 shrink-0"
-                    style={{ borderTop: `1px solid ${BORDER}`, background: "#030910" }}>
-
-                    {idealEntry && (
-                        <LevelChip label="Entry" value={`Rs. ${fmt(idealEntry)}`} color="#94a3b8" />
-                    )}
-                    {targetPrice && (
-                        <LevelChip label={prediction === "HOLD" ? "Resistance" : "T1"} value={`Rs. ${fmt(targetPrice)}`}
-                            sub={targetPct != null ? `${targetPct >= 0 ? "+" : ""}${targetPct}%` : null}
-                            color={isSell ? "#ef5350" : "#26a69a"} />
-                    )}
-                    {target2 && (
-                        <LevelChip label="T2" value={`Rs. ${fmt(target2)}`}
-                            sub={target2Pct != null ? `${target2Pct >= 0 ? "+" : ""}${target2Pct}%` : null}
-                            color={isSell ? "#f87171" : "#34d399"} />
-                    )}
-                    {stopLoss && (
-                        <LevelChip label={prediction === "HOLD" ? "Support" : "Stop Loss"} value={`Rs. ${fmt(stopLoss)}`}
-                            sub={stopLossPct != null ? `${stopLossPct}%` : null}
-                            color={isSell ? "#26a69a" : "#ef5350"} />
-                    )}
-                    {trailingStop && (
-                        <LevelChip label="Trail Stop" value={`Rs. ${fmt(trailingStop)}`} color="#f59e0b" />
-                    )}
-                    {riskReward != null && (
-                        <div className="flex flex-col items-center">
-                            <span style={{ fontSize: 9, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>Risk : Reward</span>
-                            <span style={{ fontSize: 13, fontWeight: 900, color: riskReward >= 2 ? "#22c55e" : riskReward >= 1 ? "#f59e0b" : "#ef4444" }}>
-                                1 : {Number(riskReward).toFixed(2)}
-                            </span>
+            {/* ── Sub-panel ──────────────────────────────────────────────────── */}
+            <div style={{ height: showSub ? "22%" : "0", overflow: "hidden", borderTop: showSub ? `1px solid rgba(255,255,255,0.05)` : "none" }} className="shrink-0 bg-[#030812]">
+                {showSub && (
+                    <div className="flex items-center gap-2 sm:gap-4 px-3 sm:px-5 py-1.5 sm:py-2 border-b border-white/5">
+                        <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-slate-400">{subInd} Analysis</span>
+                        <div className="h-3 w-px bg-white/10" />
+                        <div className="flex gap-2 sm:gap-4">
+                             {subInd === "rsi" && <IndicatorLegend label="Now" value={rsiNow?.toFixed(1)} color={rsiColor} />}
                         </div>
-                    )}
-                    {estimatedDays && (
-                        <LevelChip label="Timeline" value={`${estimatedDays} days`} color="#3b82f6" />
-                    )}
+                        <div className="flex-1" />
+                        <button onClick={() => setSubInd(null)} className="text-slate-500 hover:text-white"><X size={10} /></button>
+                    </div>
+                )}
+                <div ref={subRef} style={{ width: "100%", height: "calc(100% - 24px)" }} />
+            </div>
+
+            {/* ── AI Levels bar — Hidden on mobile to save vertical space ──────────────── */}
+            {(targetPrice || stopLoss) && (
+                <div className="hidden sm:flex items-center justify-between px-6 py-4 shrink-0 bg-[#050d1a] border-t border-white/5">
+                    <div className="flex items-center gap-8">
+                        {idealEntry && <LevelItem label="Target Entry" value={fmt(idealEntry)} color="#94a3b8" icon={Crosshair} />}
+                        {targetPrice && <LevelItem label="Profit Target" value={fmt(targetPrice)} sub={targetPct ? `${targetPct}%` : null} color={isSell ? "#ef4444" : "#10b981"} icon={Target} />}
+                        {stopLoss && <LevelItem label="Risk Limit" value={fmt(stopLoss)} sub={stopLossPct ? `${stopLossPct}%` : null} color={isSell ? "#10b981" : "#ef4444"} icon={Shield} />}
+                    </div>
+
+                    <div className="flex items-center gap-8 border-l border-white/5 pl-8">
+                        {riskReward != null && (
+                            <div className="flex flex-col">
+                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">R:R Ratio</span>
+                                <span className="text-sm font-black" style={{ color: riskReward >= 2 ? "#10b981" : riskReward >= 1 ? "#eab308" : "#ef4444" }}>
+                                    1 : {Number(riskReward).toFixed(2)}
+                                </span>
+                            </div>
+                        )}
+                        {estimatedDays && (
+                            <div className="flex flex-col text-right">
+                                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Est. Wait</span>
+                                <span className="text-sm font-black text-blue-400">{estimatedDays} Days</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
         </div>
     );
 }
 
-function LevelChip({ label, value, sub, color }) {
+function IndicatorLegend({ label, value, color }) {
     return (
-        <div className="flex flex-col items-center">
-            <span style={{ fontSize: 9, color: "#4a6080", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em" }}>{label}</span>
-            <span style={{ fontSize: 13, fontWeight: 900, color }}>{value}</span>
-            {sub && <span style={{ fontSize: 10, fontWeight: 700, color, opacity: 0.8 }}>{sub}</span>}
+        <div className="flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full" style={{ background: color }} />
+            <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{label}</span>
+            <span className="text-[10px] font-black text-slate-200">{value}</span>
+        </div>
+    );
+}
+
+function LevelItem({ label, value, sub, color, icon: Icon }) {
+    return (
+        <div className="flex items-center gap-3">
+            <div className="p-1.5 rounded-lg bg-white/5 border border-white/10">
+                <Icon size={14} style={{ color }} />
+            </div>
+            <div className="flex flex-col">
+                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none mb-1">{label}</span>
+                <div className="flex items-baseline gap-1.5">
+                    <span className="text-sm font-black text-white leading-none">Rs.{value}</span>
+                    {sub && <span className="text-[10px] font-bold" style={{ color }}>{sub}</span>}
+                </div>
+            </div>
         </div>
     );
 }

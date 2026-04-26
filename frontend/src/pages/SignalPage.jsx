@@ -1,387 +1,418 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-    TrendingUp, TrendingDown, Minus, RefreshCw, Play, Clock,
-    BarChart3, Zap, Search, Activity, Target, Shield, X,
+    TrendingUp, TrendingDown, Minus, RefreshCw, Zap, X,
+    Search, Activity, Target, BrainCircuit,
+    LayoutGrid, List, ArrowUpRight,
+    Cpu, Shield, BarChart2, Filter
 } from 'lucide-react';
 import { api } from '../api';
+import { getCached, fetchPredictions, isStale, invalidate } from '../cache/predictionsCache';
 import { useToast } from '../contexts/ToastContext';
 import { timeAgo, getSignalColors } from '../utils/formatters';
 import StockDetailsPage from './stock-details';
 
-// Removed StatusBar as per user request to simplify and focus on BUY signals.
-function ScanAction({ onRun, running }) {
-    return (
-        <div className="relative rounded-3xl p-6 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden shadow-2xl transition-all duration-500 hover:shadow-blue-500/10"
-            style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-            <div className="absolute top-0 left-0 w-1 h-full bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)]" />
-            
-            <div className="flex items-center gap-5">
-                <div className="w-14 h-14 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center shrink-0 shadow-inner">
-                    <Zap className={`w-7 h-7 text-blue-400 ${running ? 'animate-pulse' : ''}`} />
-                </div>
-                <div>
-                    <div className="flex items-center gap-2 mb-1">
-                        <h2 className="text-xl font-black text-white tracking-tight">Market Intelligence</h2>
-                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 border border-blue-500/20">
-                            <span className="relative flex h-1.5 w-1.5">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-blue-500"></span>
-                            </span>
-                            <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Live Sync</span>
-                        </div>
-                    </div>
-                    <p className="text-xs text-slate-500 max-w-sm">Scan the entire NEPSE market for high-probability <span className="text-emerald-400 font-bold">BUY</span> signals using our Ensemble AI engine.</p>
-                </div>
-            </div>
-
-            <button onClick={onRun} disabled={running}
-                className="w-full md:w-auto px-8 py-3.5 rounded-2xl text-sm font-black transition-all shrink-0 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed group relative overflow-hidden"
-                style={{
-                    background: running ? 'rgba(59,130,246,0.1)' : 'rgba(59,130,246,0.15)',
-                    color: '#60a5fa',
-                    border: '1px solid rgba(59,130,246,0.3)',
-                }}>
-                <div className="flex items-center justify-center gap-2 relative z-10">
-                    {running ? (
-                        <><RefreshCw className="w-4 h-4 animate-spin" />Scanning Market...</>
-                    ) : (
-                        <><Activity className="w-4 h-4 group-hover:animate-bounce" />Start AI Scan</>
-                    )}
-                </div>
-                {!running && (
-                    <div className="absolute inset-0 bg-blue-500/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300" />
-                )}
-            </button>
-        </div>
-    );
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function buildResult(r) {
+    return {
+        ...r,
+        symbol:    r.stocks?.symbol || r.symbol,
+        confidence: r.confidence_score ?? r.confidence,
+        chartData: r.chart_data || [],
+        backtest:  r.backtest || r.backtest_stats || null,
+    };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SignalCard  — premium tile with glow + confidence bar
-// ─────────────────────────────────────────────────────────────────────────────
-const SIG_ICON = { BUY: TrendingUp, SELL: TrendingDown, HOLD: Minus };
-const SIG_LABEL = { BUY: 'Strong Buy', SELL: 'Sell Signal', HOLD: 'Hold' };
-
+// ── Signal Card ─────────────────────────────────────────────────────────────
 function SignalCard({ record, onClick, active }) {
-    const sig    = record.prediction;
-    const sym    = record.stocks?.symbol || record.symbol || '?';
-    const conf   = record.confidence_score ?? record.confidence ?? 0;
-    const confPct = Number(conf).toFixed(1);
-    const rr     = record.risk_reward ?? null;
-    const tp     = record.target_pct ?? null;
+    const sig = record.prediction;
+    const sym = record.stocks?.symbol || record.symbol || '?';
+    const conf = +(record.confidence_score ?? record.confidence ?? 0);
+    const rr = record.risk_reward ?? 0;
+    const tp = record.target_pct ?? 0;
     const colors = getSignalColors(sig);
-    const Icon   = SIG_ICON[sig] || Minus;
+    const Icon = sig === 'BUY' ? TrendingUp : sig === 'SELL' ? TrendingDown : Minus;
 
     return (
-        <button
-            onClick={() => onClick(record)}
-            className="group relative rounded-2xl overflow-hidden text-left transition-all duration-300 w-full active:scale-[0.97] hover:-translate-y-1 hover:shadow-2xl"
-            style={{
-                background: active ? `${colors.text}12` : 'rgba(255,255,255,0.02)',
+        <button onClick={() => onClick(record)}
+            className="group relative rounded-lg sm:rounded-xl p-4 sm:p-5 overflow-hidden text-left transition-all duration-500 w-full hover:-translate-y-2"
+            style={{ 
+                background: active ? `${colors.text}10` : 'rgba(255,255,255,0.02)',
                 border: `1px solid ${active ? colors.text : 'rgba(255,255,255,0.05)'}`,
-            }}
-            onMouseEnter={e => {
-                e.currentTarget.style.background = `${colors.text}12`;
-                e.currentTarget.style.borderColor = `${colors.text}35`;
-            }}
-            onMouseLeave={e => {
-                if (!active) {
-                    e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
-                    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
-                }
-            }}
-        >
-            {/* Top glow accent */}
-            <div className="absolute top-0 left-0 right-0 h-[2px] transition-opacity duration-300"
-                style={{
-                    background: `linear-gradient(90deg, transparent, ${colors.text}, transparent)`,
-                    opacity: active ? 1 : 0,
-                }} />
-
-            {/* Card body */}
-            <div className="p-3.5">
-                {/* Row 1: Symbol + Badge */}
-                <div className="flex items-center justify-between mb-3 relative z-10">
-                    <span className="text-sm font-black text-white tracking-wide transition-all group-hover:!text-[var(--acc-color)] group-hover:translate-x-1" style={{ '--acc-color': colors.text }}>{sym}</span>
-                    <div className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-black transition-all group-hover:scale-105"
-                        style={{ background: `${colors.text}18`, color: colors.text, border: `1px solid ${colors.text}30`, boxShadow: `0 0 10px ${colors.text}22` }}>
-                        <Icon className="w-2.5 h-2.5" />
-                        {sig}
+                boxShadow: active ? `0 20px 40px -10px ${colors.text}20` : 'none'
+            }}>
+            
+            <div className="flex flex-col h-full justify-between gap-4 sm:gap-6">
+                <div className="flex items-start justify-between">
+                    <div className="min-w-0">
+                        <h4 className="text-xl sm:text-2xl font-black text-white tracking-tighter uppercase truncate">{sym}</h4>
+                        <p className="text-[8px] sm:text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">{timeAgo(record.created_at)}</p>
+                    </div>
+                    <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg sm:rounded-xl text-[8px] sm:text-[10px] font-black uppercase tracking-widest shadow-lg shrink-0"
+                        style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>
+                        <Icon className="w-3 sm:w-3.5 h-3 sm:h-3.5" /> {sig}
                     </div>
                 </div>
 
-                {/* Row 2: Confidence */}
-                <div className="mb-2.5 relative z-10">
-                    <div className="flex justify-between items-center mb-1">
-                        <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">AI Confidence</span>
-                        <span className="text-xs font-black tabular-nums transition-all group-hover:scale-110" style={{ color: colors.text }}>{confPct}%</span>
+                <div className="space-y-2 sm:space-y-3">
+                    <div className="flex justify-between items-end">
+                        <span className="text-[8px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Confidence</span>
+                        <span className="text-sm sm:text-base font-black tabular-nums" style={{ color: colors.text }}>{conf.toFixed(1)}%</span>
                     </div>
-                    <div className="h-1 w-full rounded-full bg-white/5">
-                        <div className="h-full rounded-full transition-all duration-500"
-                            style={{ width: `${confPct}%`, background: `linear-gradient(90deg, ${colors.text}80, ${colors.text})`, boxShadow: `0 0 8px ${colors.text}40` }} />
+                    <div className="h-1 sm:h-1.5 w-full rounded-full bg-white/5 overflow-hidden p-[1px]">
+                        <div className="h-full rounded-full transition-all duration-1000 ease-out shadow-[0_0_10px_currentColor]"
+                            style={{ width: `${conf}%`, background: colors.text, color: colors.text }} />
                     </div>
                 </div>
 
-                {/* Row 3: Stats */}
-                <div className="flex items-center justify-between gap-1 pt-2 border-t border-white/5">
-                    {tp !== null ? (
-                        <div>
-                            <p className="text-[8px] text-slate-600 uppercase font-bold">Target</p>
-                            <p className="text-[11px] font-black text-emerald-400 tabular-nums">+{tp.toFixed(1)}%</p>
-                        </div>
-                    ) : (
-                        <div>
-                            <p className="text-[8px] text-slate-600 uppercase font-bold">Signal</p>
-                            <p className="text-[10px] font-black text-slate-400">{SIG_LABEL[sig]}</p>
-                        </div>
-                    )}
-                    {rr !== null && (
-                        <div className="text-right">
-                            <p className="text-[8px] text-slate-600 uppercase font-bold">R/R</p>
-                            <p className="text-[11px] font-black text-amber-400 tabular-nums">{rr.toFixed(1)}x</p>
-                        </div>
-                    )}
+                <div className="grid grid-cols-2 gap-3 sm:gap-4 pt-3 sm:pt-4 border-t border-white/5">
+                    <div>
+                        <p className="text-[8px] sm:text-[9px] text-slate-600 uppercase font-black tracking-widest mb-0.5 sm:mb-1">Target</p>
+                        <p className="text-xs sm:text-sm font-black text-emerald-400 tabular-nums">+{tp.toFixed(1)}%</p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-[8px] sm:text-[9px] text-slate-600 uppercase font-black tracking-widest mb-0.5 sm:mb-1">Risk/Reward</p>
+                        <p className="text-xs sm:text-sm font-black text-blue-400 tabular-nums">1:{rr.toFixed(1)}</p>
+                    </div>
                 </div>
             </div>
-
-            {/* Active indicator bottom bar */}
-            {active && (
-                <div className="absolute bottom-0 left-0 right-0 h-[2px]"
-                    style={{ background: `linear-gradient(90deg, transparent, ${colors.text}, transparent)` }} />
-            )}
-
-            {/* Hover glow overlay */}
-            <div className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                style={{ background: `radial-gradient(circle at 50% 0%, ${colors.text}08 0%, transparent 70%)` }} />
+            
+            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none"
+                style={{ background: `radial-gradient(circle at bottom left, ${colors.text}08, transparent 70%)` }} />
         </button>
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Skeleton Card
-// ─────────────────────────────────────────────────────────────────────────────
-function SkeletonCard() {
+// ── Signal Row ─────────────────────────────────────────────────────────────
+function SignalRow({ record, onClick, active }) {
+    const sig = record.prediction;
+    const sym = record.stocks?.symbol || record.symbol || '?';
+    const conf = +(record.confidence_score ?? record.confidence ?? 0);
+    const rr = record.risk_reward ?? 0;
+    const tp = record.target_pct ?? 0;
+    const sl = record.stop_loss_pct ?? 0;
+    const colors = getSignalColors(sig);
+
     return (
-        <div className="rounded-2xl p-3.5 space-y-3"
-            style={{ background: '#0a1120', border: '1px solid rgba(255,255,255,0.05)' }}>
-            <div className="flex items-center justify-between">
-                <div className="h-4 w-16 rounded-lg bg-white/10 animate-pulse" />
-                <div className="h-5 w-14 rounded-lg bg-white/5 animate-pulse" />
-            </div>
-            <div className="space-y-1.5">
-                <div className="flex justify-between">
-                    <div className="h-2.5 w-20 rounded bg-white/5 animate-pulse" />
-                    <div className="h-2.5 w-10 rounded bg-white/10 animate-pulse" />
+        <tr onClick={() => onClick(record)} 
+            className={`group cursor-pointer hover:bg-white/[0.03] transition-all border-b border-white/5 last:border-0 ${active ? 'bg-white/[0.03]' : ''}`}>
+            <td className="py-4 sm:py-5 pl-4 sm:pl-8">
+                <div className="flex items-center gap-3 sm:gap-4">
+                    <div className={`w-1 h-8 sm:w-1.5 sm:h-10 rounded-full shadow-[0_0_15px_currentColor] transition-all ${active ? 'opacity-100' : 'opacity-0'}`} 
+                        style={{ background: colors.text, color: colors.text }} />
+                    <div className="min-w-0">
+                        <p className="text-sm sm:text-base font-black text-white tracking-tighter uppercase truncate">{sym}</p>
+                        <p className="text-[8px] sm:text-[9px] text-slate-500 uppercase font-bold tracking-widest">{timeAgo(record.created_at)}</p>
+                    </div>
                 </div>
-                <div className="h-1 w-full rounded-full bg-white/5 animate-pulse" />
-            </div>
-            <div className="flex justify-between pt-2 border-t border-white/5">
-                <div className="h-3 w-14 rounded bg-white/5 animate-pulse" />
-                <div className="h-3 w-10 rounded bg-white/5 animate-pulse" />
-            </div>
-        </div>
+            </td>
+            <td className="py-4 sm:py-5">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg sm:rounded-xl text-[8px] sm:text-[10px] font-black uppercase tracking-widest shadow-inner"
+                    style={{ background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>
+                    {sig}
+                </div>
+            </td>
+            <td className="py-4 sm:py-5 hidden md:table-cell">
+                <div className="flex flex-col gap-2 w-32 lg:w-40">
+                    <div className="flex justify-between items-center px-1">
+                        <span className="text-[8px] sm:text-[9px] font-black text-slate-500 uppercase tracking-widest">Confidence</span>
+                        <span className="text-[10px] sm:text-xs font-black tabular-nums" style={{ color: colors.text }}>{conf.toFixed(0)}%</span>
+                    </div>
+                    <div className="h-1 w-full rounded-full bg-white/5 overflow-hidden p-[1px]">
+                        <div className="h-full rounded-full transition-all duration-1000 ease-out" 
+                            style={{ width: `${conf}%`, background: colors.text, boxShadow: `0 0 10px ${colors.text}40` }} />
+                    </div>
+                </div>
+            </td>
+            <td className="py-4 sm:py-5 font-black text-xs sm:text-sm text-emerald-400 tabular-nums">+{tp.toFixed(1)}%</td>
+            <td className="py-4 sm:py-5 font-black text-xs sm:text-sm text-red-400 tabular-nums hidden lg:table-cell">-{Math.abs(sl).toFixed(1)}%</td>
+            <td className="py-4 sm:py-5 hidden xl:table-cell">
+                <span className={`text-[10px] sm:text-xs font-black px-2 sm:px-3 py-1 rounded-lg sm:rounded-xl border tabular-nums ${rr >= 2 ? 'text-emerald-400 border-emerald-400/20 bg-emerald-400/10' : 'text-slate-400 border-white/10 bg-white/5'}`}>
+                    1:{rr.toFixed(1)}
+                </span>
+            </td>
+            <td className="py-4 sm:py-5 pr-4 sm:pr-8 text-right">
+                <div className="flex items-center justify-end gap-2 md:opacity-0 md:group-hover:opacity-100 transition-all md:translate-x-4 md:group-hover:translate-x-0">
+                    <span className="text-[8px] sm:text-[10px] font-black text-blue-400 uppercase tracking-widest hidden sm:inline">View</span>
+                    <div className="p-2 sm:p-2.5 rounded-lg sm:rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30">
+                        <ArrowUpRight className="w-3.5 h-3.5 sm:w-4 h-4" />
+                    </div>
+                </div>
+            </td>
+        </tr>
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildResult
-// ─────────────────────────────────────────────────────────────────────────────
-function buildResult(record) {
-    const ai = record.ai_analysis || {};
-    return {
-        symbol:          record.stocks?.symbol || record.symbol || 'UNKNOWN',
-        prediction:      record.prediction,
-        confidence:      record.confidence_score ?? record.confidence,
-        explanation:     record.explanation,
-        target_price:    record.target_price    ?? null,
-        stop_loss:       record.stop_loss        ?? null,
-        estimated_days:  record.estimated_days   ?? null,
-        target_pct:      record.target_pct       ?? null,
-        stop_loss_pct:   record.stop_loss_pct    ?? null,
-        risk_reward:     record.risk_reward       ?? null,
-        all_proba:       record.all_proba         ?? null,
-        indicators:      record.indicators        ?? null,
-        model_metrics:   record.model_metrics     ?? null,
-        ideal_entry:     ai.ideal_entry        ?? null,
-        entry_zone_low:  ai.entry_zone_low     ?? null,
-        entry_zone_high: ai.entry_zone_high    ?? null,
-        entry_condition: ai.entry_condition    ?? null,
-        target2:         ai.target2            ?? null,
-        target2_pct:     ai.target2_pct        ?? null,
-        trailing_stop:   ai.trailing_stop      ?? null,
-        signal_history:  record.signal_history || [],
-        chartData:       record.chart_data     || [],
-        backtest:        record.backtest       || record.backtest_stats || null,
-    };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Main Page
-// ─────────────────────────────────────────────────────────────────────────────
-const FILTERS = ['ALL', 'BUY', 'HOLD', 'SELL'];
-
-export default function SignalPage({ initialRecord }) {
+// ── Main Component ─────────────────────────────────────────────────────────────
+export default function SignalPage() {
     const { addToast } = useToast();
-    const [records,  setRecords]  = useState([]);
-    const [loading,  setLoading]  = useState(true);
-    const [running,  setRunning]  = useState(false);
-    const [search,   setSearch]   = useState('');
-    const [selected, setSelected] = useState(initialRecord ? buildResult(initialRecord) : null);
+    const [records, setRecords] = useState(() => getCached() || []);
+    const [loading, setLoading] = useState(!getCached());
+    const [running, setRunning] = useState(false);
+    const [search, setSearch]   = useState('');
+    const [viewMode, setViewMode] = useState('grid');
+    const [selected, setSelected] = useState(null);
+    const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
 
-    // Filter to only show BUY signals
-    const filteredRecords = useMemo(() => {
-        const buyOnly = records.filter(r => r.prediction === 'BUY');
-        if (!search) return buyOnly;
-        const q = search.toLowerCase();
-        return buyOnly.filter(r => {
-            const sym = (r.stocks?.symbol || r.symbol || '').toLowerCase();
-            return sym.includes(q);
-        });
-    }, [records, search]);
-
-    const fetchData = useCallback(async (isBackground = false) => {
-        if (!isBackground) setLoading(true);
+    const fetchData = useCallback(async (isBg = false) => {
+        if (!isBg && !getCached()) setLoading(true);
         try {
-            const recs = await api.getHistory();
-            setRecords(recs.data.data || []);
-        } catch (e) {
-            console.error('Signal fetch error:', e);
+            const data = await fetchPredictions();
+            setRecords(data);
+        } catch {
+            if (!isBg) addToast?.({ title: 'Fetch Failed', message: 'Could not load signals.', type: 'error' });
         } finally {
-            if (!isBackground) setLoading(false);
+            setLoading(false);
         }
-    }, []);
+    }, [addToast]);
 
     useEffect(() => {
-        fetchData();
-        const tid = setInterval(() => fetchData(true), 10000);
+        if (isStale()) fetchData(!!getCached());
+        const tid = setInterval(() => fetchData(true), 30_000);
         return () => clearInterval(tid);
     }, [fetchData]);
 
+    // ── Scan Status Polling ────────────────────────────────────────────────
+    useEffect(() => {
+        let timer;
+        if (running) {
+            timer = setInterval(async () => {
+                try {
+                    const res = await api.getScanStatus();
+                    const status = res.data; // Correctly access axios data
+                    if (status.progress) {
+                        setScanProgress(status.progress);
+                    }
+                    if (!status.running) {
+                        setRunning(false);
+                        invalidate();
+                        fetchData();
+                        addToast?.({ title: 'Scan Complete', message: 'Market analysis finished successfully.', type: 'success' });
+                    }
+                } catch (err) {
+                    console.error("Status check failed:", err);
+                }
+            }, 3000);
+        }
+        return () => clearInterval(timer);
+    }, [running, fetchData, addToast]);
+
     const handleRun = async () => {
+        if (running) return;
         setRunning(true);
+        setScanProgress({ current: 0, total: 0 });
         try {
             await api.runPredictions();
-            addToast?.({ title: 'Scan Started', message: 'AI prediction cycle is running…', type: 'success' });
-            setTimeout(fetchData, 2000);
+            addToast?.({ title: 'Scan Initialized', message: 'Deep market analysis is starting...', type: 'info' });
         } catch {
-            addToast?.({ title: 'Error', message: 'Failed to start predictions', type: 'error' });
-        } finally {
             setRunning(false);
+            addToast?.({ title: 'Scan Failed', message: 'Could not connect to AI engine.', type: 'error' });
         }
     };
 
-    const handlePredict = async () => {
-        if (!search.trim()) return;
+    const handleRetrain = async () => {
+        if (running) return;
+        if (!window.confirm("Deep Retraining takes ~15 minutes and rebuilds the AI brain. Continue?")) return;
         setRunning(true);
+        setScanProgress({ current: 0, total: 0 });
         try {
-            const res = await api.predict(search.toUpperCase());
-            setSelected(buildResult(res.data));
-            addToast?.({ title: 'Analysis Complete', message: `${search.toUpperCase()} analysed by AI`, type: 'success' });
-        } catch (e) {
-            addToast?.({ title: 'Failed', message: e.response?.data?.error || 'Invalid symbol', type: 'error' });
-        } finally {
+            await api.retrainAI();
+            addToast?.({ title: 'Training Started', message: 'The AI is learning from fresh data...', type: 'info' });
+        } catch {
             setRunning(false);
+            addToast?.({ title: 'Training Failed', message: 'Could not start background training.', type: 'error' });
         }
     };
+
+    const progressPct = scanProgress.total > 0 
+        ? Math.round((scanProgress.current / scanProgress.total) * 100) 
+        : 0;
 
     const filtered = useMemo(() => {
         const buys = records.filter(r => r.prediction === 'BUY');
         if (!search) return buys;
         const q = search.toUpperCase();
-        return buys.filter(r => {
-            const sym = (r.stocks?.symbol || r.symbol || '').toUpperCase();
-            return sym.includes(q);
-        });
+        return buys.filter(r => (r.stocks?.symbol || r.symbol || '').toUpperCase().includes(q));
     }, [records, search]);
 
     const stats = useMemo(() => {
-        const avgConf = filtered.length
-            ? (filtered.reduce((s, r) => s + (r.confidence_score ?? r.confidence ?? 0), 0) / filtered.length * 100)
-            : 0;
-        const rrs = filtered.filter(r => r.risk_reward).map(r => r.risk_reward);
-        const avgRR = rrs.length ? rrs.reduce((s, v) => s + v, 0) / rrs.length : 0;
-        return { total: filtered.length, avgConf, avgRR };
+        const highConv = filtered.filter(r => (r.confidence_score ?? 0) >= 80).length;
+        const avgConf = filtered.length ? filtered.reduce((s, r) => s + (r.confidence_score ?? 0), 0) / filtered.length : 0;
+        const avgRR = filtered.length ? filtered.reduce((s, r) => s + (r.risk_reward ?? 0), 0) / filtered.length : 0;
+        return { total: filtered.length, highConv, avgConf, avgRR };
     }, [filtered]);
 
-    const noSearchMatch = search && filtered.length === 0;
+    if (loading) {
+        return (
+            <main className="max-w-[1600px] mx-auto p-4 sm:p-8 space-y-10 animate-pulse">
+                <div className="h-64 bg-white/5 rounded-[2.5rem] border border-white/5" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                        <div key={i} className="h-80 bg-white/5 rounded-3xl border border-white/5" />
+                    ))}
+                </div>
+            </main>
+        );
+    }
 
     return (
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 pt-4 pb-24 space-y-8">
-            
-            {/* ── Scan Action (Simplified UI) ─────────────────────────── */}
-            <ScanAction onRun={handleRun} running={running} />
+        <main className="w-full max-w-[1600px] mx-auto p-0 sm:p-8 space-y-4 sm:space-y-12">
+            {/* Elite Dashboard Header */}
+            <div className="relative overflow-hidden sm:rounded-xl bg-[#0A121E] border-y sm:border border-white/5 p-3 sm:p-5 shadow-2xl">
+                <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-blue-600/5 to-transparent pointer-events-none" />
+                
+                <div className="relative space-y-4 sm:space-y-6">
+                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-5">
+                        
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 flex-1">
+                            <div className="relative flex-1 group">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-focus-within:text-blue-500 transition-colors" />
+                                <input 
+                                    type="text"
+                                    placeholder="Search market signals..."
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-lg sm:rounded-xl py-2 sm:py-3 pl-11 sm:pl-14 pr-4 text-sm sm:text-base text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500/40 transition-all font-medium"
+                                />
+                            </div>
 
-            {/* ── Hot Buy Signals List ────────────────────────────────── */}
-            <div className="space-y-6">
-                <div className="flex items-center justify-between px-2">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                            <TrendingUp className="w-5 h-5 text-emerald-400" />
+                            <div className="flex bg-white/5 border border-white/10 p-0.5 rounded-lg sm:rounded-xl shrink-0">
+                                <button onClick={() => setViewMode('table')} className={`flex items-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all ${viewMode === 'table' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+                                    <List className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    <span className="hidden sm:inline">Table</span>
+                                </button>
+                                <button onClick={() => setViewMode('grid')} className={`flex items-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all ${viewMode === 'grid' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+                                    <LayoutGrid className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    <span className="hidden sm:inline">Grid</span>
+                                </button>
+                            </div>
+
+                            <div className="flex gap-1.5 w-full sm:w-auto">
+                                <button onClick={handleRetrain} disabled={running} 
+                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg border transition-all font-black text-[10px] sm:text-xs uppercase tracking-widest relative overflow-hidden ${
+                                        running ? 'bg-white/5 border-white/10 text-slate-600' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
+                                    }`}>
+                                    {running && (
+                                        <div className="absolute bottom-0 left-0 h-1 bg-blue-400/30 transition-all duration-500" style={{ width: `${progressPct}%` }} />
+                                    )}
+                                    <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    <span>Deep Retrain</span>
+                                </button>
+
+                                <button onClick={handleRun} disabled={running} 
+                                    className={`flex-1 sm:flex-none flex flex-col items-center justify-center min-w-[120px] sm:min-w-[140px] py-1.5 sm:py-2 rounded-lg font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all relative overflow-hidden ${
+                                        running ? 'bg-blue-600/10 text-blue-400 border border-blue-500/30' : 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-500'
+                                    }`}>
+                                    {running && (
+                                        <div className="absolute bottom-0 left-0 h-1 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,1)] transition-all duration-500" style={{ width: `${progressPct}%` }} />
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                        <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${running ? 'animate-spin' : ''}`} />
+                                        <span>{running ? `${progressPct}%` : 'Run Scan'}</span>
+                                    </div>
+                                    {running && <span className="text-[7px] sm:text-[8px] opacity-60 mt-0.5">{scanProgress.current}/{scanProgress.total}</span>}
+                                </button>
+                            </div>
                         </div>
-                        <div>
-                            <h3 className="text-lg font-black text-white tracking-tight">Active BUY Signals</h3>
-                            <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-0.5">High-confidence market opportunities</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        {/* Search Input */}
-                        <div className="relative group hidden md:block">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
-                            <input type="text" placeholder="Search signals..." value={search}
-                                onChange={e => setSearch(e.target.value)}
-                                className="pl-9 pr-4 py-2 rounded-xl text-xs font-bold outline-none transition-all border border-white/5 bg-white/5 focus:bg-white/10 focus:border-blue-500/30 text-white placeholder:text-slate-600 w-64" />
-                        </div>
-                        <span className="text-[10px] font-black text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]">
-                            {filtered.length} Stocks Found
-                        </span>
                     </div>
                 </div>
 
-                {loading ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {[...Array(10)].map((_, i) => <SkeletonCard key={i} />)}
+                {/* KPI Ribbon */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-8 mt-3 sm:mt-5 pt-3 sm:pt-5 border-t border-white/5">
+                    {[
+                        { l: 'Matching', v: stats.total, c: 'text-white', icon: Activity },
+                        { l: 'High Conv.', v: stats.highConv, c: 'text-emerald-400', icon: TrendingUp },
+                        { l: 'Avg Conf.', v: `${stats.avgConf.toFixed(0)}%`, c: 'text-blue-400', icon: BrainCircuit },
+                        { l: 'Profit Factor', v: `${stats.avgRR.toFixed(1)}x`, c: 'text-amber-400', icon: Target },
+                    ].map(s => (
+                        <div key={s.l} className="flex items-center gap-2 sm:gap-4 group">
+                            <div className="w-7 h-7 sm:w-10 sm:h-10 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center transition-transform shrink-0">
+                                <s.icon className={`w-3 sm:w-4 h-3 sm:h-4 ${s.c}`} />
+                            </div>
+                            <div className="space-y-0.5 min-w-0">
+                                <p className="text-[8px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest truncate">{s.l}</p>
+                                <p className={`text-sm sm:text-xl font-black tabular-nums ${s.c}`}>{s.v}</p>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {/* Results */}
+            <div className="flex-1 w-full min-w-0 pb-20 sm:pb-0">
+                {filtered.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-20 sm:py-48 text-center border-y sm:border sm:rounded-xl p-6 space-y-6 sm:space-y-8" 
+                        style={{ background: 'rgba(8, 15, 26, 0.4)', borderColor: 'rgba(255, 255, 255, 0.05)' }}>
+                        <div className="relative">
+                            <div className="absolute inset-0 bg-blue-500/10 blur-3xl rounded-full" />
+                            <div className="relative w-20 h-20 sm:w-32 sm:h-32 rounded-full bg-white/5 border border-white/10 flex items-center justify-center">
+                                <Activity className="w-8 h-8 sm:w-12 sm:h-12 text-slate-700" />
+                            </div>
+                        </div>
+                        <div className="space-y-2 sm:space-y-4 max-w-lg">
+                            <h3 className="text-lg sm:text-4xl font-black text-white tracking-tighter">No Active Signals</h3>
+                            <p className="text-[10px] sm:text-base text-slate-500 leading-relaxed font-medium">
+                                The AI engine is monitoring the market. Run a deep scan to discover high-probability setups across all 200+ stocks.
+                            </p>
+                        </div>
+                        
+                        <div className="space-y-4 w-full max-w-xs">
+                            <button onClick={handleRun} disabled={running}
+                                className="w-full group relative px-8 sm:px-12 py-3.5 sm:py-5 rounded-lg sm:rounded-xl bg-blue-600 text-white font-black text-[10px] sm:text-xs uppercase tracking-[0.2em] sm:tracking-[0.3em] hover:bg-blue-500 hover:shadow-[0_0_50px_rgba(37,99,235,0.4)] transition-all active:scale-95 disabled:opacity-50 overflow-hidden">
+                                {running && (
+                                    <div className="absolute bottom-0 left-0 h-1.5 bg-white shadow-[0_0_15px_white] transition-all duration-500" style={{ width: `${progressPct}%` }} />
+                                )}
+                                <div className="relative z-10 flex items-center justify-center gap-2 sm:gap-3">
+                                    {running ? <RefreshCw className="w-4 h-4 sm:w-6 sm:h-6 animate-spin" /> : null}
+                                    {running ? `Scanning ${progressPct}%` : 'Start Full Market Scan'}
+                                </div>
+                            </button>
+                            {running && (
+                                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest animate-pulse">
+                                    Processing Stock {scanProgress.current} of {scanProgress.total}
+                                </p>
+                            )}
+                        </div>
                     </div>
-                ) : filtered.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                ) : viewMode === 'grid' ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 sm:gap-6 animate-in fade-in zoom-in-95 duration-500">
                         {filtered.map(r => (
-                            <SignalCard 
-                                key={r.id} 
-                                record={r} 
-                                onClick={setSelected} 
-                                active={selected?.symbol === (r.stocks?.symbol || r.symbol)} 
-                            />
+                            <SignalCard key={r.id} record={r} onClick={(rec) => setSelected(buildResult(rec))} active={selected?.id === r.id} />
                         ))}
                     </div>
                 ) : (
-                    /* Empty State */
-                    <div className="rounded-[40px] py-24 flex flex-col items-center justify-center text-center space-y-6"
-                        style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-                        <div className="w-20 h-20 rounded-full bg-slate-800/20 border border-white/5 flex items-center justify-center">
-                            <Search className="w-8 h-8 text-slate-700" />
+                    <div className="rounded-lg sm:rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-700" 
+                        style={{ background: 'rgba(8, 15, 26, 0.5)', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(20px)' }}>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left border-collapse min-w-full">
+                                <thead>
+                                    <tr className="border-b border-white/5" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)' }}>
+                                        <th className="px-5 py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Symbol</th>
+                                        <th className="py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Signal</th>
+                                        <th className="py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 hidden md:table-cell">Confidence</th>
+                                        <th className="py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">Target</th>
+                                        <th className="py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 hidden lg:table-cell">Stop Loss</th>
+                                        <th className="py-4 sm:py-6 text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 hidden xl:table-cell">Risk/Reward</th>
+                                        <th className="px-5 py-4 sm:py-6 text-right text-[9px] sm:text-[11px] font-black uppercase tracking-[0.2em] text-slate-500">View</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                    {filtered.map(r => (
+                                        <SignalRow key={r.id} record={r} onClick={(rec) => setSelected(buildResult(rec))} active={selected?.id === r.id} />
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
-                        <div className="space-y-2">
-                            <h3 className="text-xl font-black text-white">No Active Buy Signals</h3>
-                            <p className="text-sm text-slate-500 max-w-sm mx-auto">
-                                The AI engine hasn't identified any high-probability buy opportunities yet. Try running a fresh scan.
-                            </p>
-                        </div>
-                        <button onClick={handleRun} className="px-8 py-3 rounded-2xl bg-blue-600/10 text-blue-400 border border-blue-500/30 font-black text-sm hover:bg-blue-600/20 transition-all active:scale-95">
-                            Run Market Analysis
-                        </button>
                     </div>
                 )}
             </div>
 
-            {/* ── Stock Detail Panel (Full Page Overlay) ────────────────── */}
+            {/* Premium Terminal Modal */}
             {selected && (
-                <div className="fixed inset-0 z-[100] bg-[#020813] overflow-y-auto pt-4 pb-20 px-4">
-                    <div className="max-w-7xl mx-auto">
-                        <div className="flex justify-start mb-6">
-                            <button onClick={() => setSelected(null)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-xs font-bold text-slate-400 hover:text-white transition-all">
-                                <X className="w-4 h-4" /> Back to Buy Signals
-                            </button>
+                <div className="fixed top-14 sm:top-20 lg:top-24 bottom-0 left-0 right-0 z-[50] bg-[#01050d]/95 backdrop-blur-3xl overflow-y-auto pt-4 sm:pt-6 pb-12 sm:pb-20 px-1.5 sm:px-6 animate-in fade-in slide-in-from-bottom-20 duration-500">
+                    <div className="max-w-[1600px] mx-auto">
+                        <div className="rounded-3xl sm:rounded-[48px] overflow-hidden border border-white/10 shadow-full bg-[#050d1a]/80">
+                            <StockDetailsPage selected={selected} onBack={() => setSelected(null)} />
                         </div>
-                        <StockDetailsPage selected={selected} onBack={() => setSelected(null)} />
                     </div>
                 </div>
             )}

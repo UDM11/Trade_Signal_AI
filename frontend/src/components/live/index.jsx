@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { api } from '../../api';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import './live.css';
+import { api } from '../../api';
+import { getCached, fetchPredictions, isStale } from '../../cache/predictionsCache';
 
 // Hooks
 import { useMarketData } from './useMarketData';
@@ -13,44 +14,46 @@ import MarketTable from './MarketTable';
 import StockDetailPanel from './StockDetailPanel';
 import NepseChartSection from './NepseChartSection';
 
-export default function LiveMarket() {
+export default function LiveMarket({ initialSymbol }) {
     const data = useMarketData();
     const [selectedSymbol, setSelectedSymbol] = useState(null);
     const [chartData, setChartData] = useState([]);
     const [chartLoading, setChartLoading] = useState(false);
-    const [predictions, setPredictions] = useState([]);
-    const [selectedPrediction, setSelectedPrediction] = useState(null);
+    const [predictions, setPredictions] = useState(() => getCached() || []);
 
     // Sync selected stock with live data
     const currentStock = useMemo(() => {
         if (!selectedSymbol) return null;
-        return data.stocks.find(s => s.symbol === selectedSymbol);
-    }, [selectedSymbol, data.stocks]);
+        if (selectedSymbol === 'NEPSE') {
+            return {
+                symbol: 'NEPSE',
+                name: 'NEPSE Index',
+                ltp: data.index?.value || 0,
+                change: data.index?.change || 0,
+                change_pct: data.index?.change_pct || 0,
+                open: data.index?.open || data.index?.value || 0,
+                high: data.index?.high || data.index?.value || 0,
+                low: data.index?.low || data.index?.value || 0,
+                volume: data.summary?.total_volume || 0,
+            };
+        }
+        return data.stocks.find(s => s.symbol.toUpperCase() === selectedSymbol.toUpperCase());
+    }, [selectedSymbol, data.stocks, data.index]);
 
-    // Fetch predictions on mount
-    useEffect(() => {
-        const fetchPredictions = async () => {
-            try {
-                const res = await api.getHistory();
-                setPredictions(res.data.data || []);
-            } catch (e) {
-                console.error("Failed to fetch predictions", e);
-            }
-        };
-        fetchPredictions();
-    }, []);
-
+    // Find cached prediction for the selected symbol
+    const selectedPrediction = useMemo(() => {
+        if (!selectedSymbol) return null;
+        return predictions.find(p => 
+            (p.stocks?.symbol?.toUpperCase() === selectedSymbol.toUpperCase()) || 
+            (p.symbol?.toUpperCase() === selectedSymbol.toUpperCase())
+        );
+    }, [selectedSymbol, predictions]);
+ 
     // Handle stock selection
-    const handleSelect = async (stock) => {
+    const handleSelect = useCallback(async (stock) => {
+        if (!stock?.symbol) return;
         setSelectedSymbol(stock.symbol);
         setChartLoading(true);
-        
-        // Find cached prediction for this symbol
-        const pred = predictions.find(p => 
-            (p.stocks?.symbol?.toUpperCase() === stock.symbol.toUpperCase()) || 
-            (p.symbol?.toUpperCase() === stock.symbol.toUpperCase())
-        );
-        setSelectedPrediction(pred || null);
 
         try {
             const res = await api.getNepseChart(stock.symbol);
@@ -60,14 +63,48 @@ export default function LiveMarket() {
         } finally {
             setChartLoading(false);
         }
-    };
+    }, [predictions]);
+
+    // Sync predictions from shared cache — instant if already loaded by another page
+    useEffect(() => {
+        if (isStale()) {
+            fetchPredictions().then(data => setPredictions(data)).catch(() => {});
+        }
+    }, []);
+
+    // Sync initialSymbol from prop — but only when it actually changes from outside
+    const lastInitialSymbol = React.useRef(initialSymbol);
+    useEffect(() => {
+        if (!data.stocks.length) return;
+        
+        // Only trigger if initialSymbol prop changed from what we last saw
+        if (initialSymbol !== lastInitialSymbol.current) {
+            lastInitialSymbol.current = initialSymbol;
+            
+            if (!initialSymbol) {
+                setSelectedSymbol(null);
+                return;
+            }
+
+            // Special case for NEPSE index
+            if (initialSymbol === 'NEPSE') {
+                handleSelect({ symbol: 'NEPSE' });
+                return;
+            }
+
+            const stock = data.stocks.find(s => s.symbol.toUpperCase() === initialSymbol.toUpperCase());
+            if (stock) {
+                handleSelect(stock);
+            }
+        }
+    }, [initialSymbol, data.stocks.length, handleSelect]);
 
     if (!data.stocks.length && !data.connected) {
         return <LiveMarketSkeleton />;
     }
 
     return (
-        <div className="max-w-7xl mx-auto space-y-6 pb-20">
+        <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 pb-20 px-2 sm:px-8">
             {currentStock ? (
                 <StockDetailPanel 
                     stock={currentStock} 
@@ -91,18 +128,36 @@ export default function LiveMarket() {
                         losers={data.movers.losers} 
                         turnovers={data.movers.turnovers} 
                         volumes={data.movers.volumes} 
-                        onSelect={handleSelect} 
+                        onSelect={handleSelect}
+                        predictions={predictions}
                     />
 
-                    {/* All Stocks Table */}
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                            <h2 className="text-xl font-black text-white">Live Market</h2>
-                            <div className="flex items-center gap-3">
-                                <span className="text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                                    Last Updated: {data.lastUpdated}
-                                </span>
-                                <CountdownRing refreshing={data.refreshing} />
+                    {/* All Stocks Table with Search */}
+                    <div className="space-y-3 sm:space-y-4 pt-2 sm:pt-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+                            <h2 className="text-[11px] sm:text-xl font-black text-white flex items-center gap-1.5 sm:gap-2 uppercase tracking-tight">
+                                <span className="w-1 h-4 sm:w-2 sm:h-6 bg-blue-500 rounded-full"></span>
+                                Live Market Terminal
+                            </h2>
+                            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+                                <div className="relative group flex-1 sm:w-64">
+                                    <div className="absolute inset-y-0 left-2.5 flex items-center pointer-events-none text-text-muted group-focus-within:text-blue-400 transition-colors">
+                                        <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                                    </div>
+                                    <input 
+                                        type="text"
+                                        placeholder="SEARCH STOCK (E.G. NICA, AHPC...)"
+                                        value={data.search}
+                                        onChange={(e) => data.setSearch(e.target.value)}
+                                        className="w-full bg-white/5 border border-white/10 rounded-lg sm:rounded-xl py-2 sm:py-2 pl-8 sm:pl-10 pr-4 text-[10px] sm:text-xs font-bold text-white focus:outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all placeholder:text-text-muted/50"
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between sm:justify-start gap-2 bg-white/5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-white/10">
+                                    <span className="text-[8px] sm:text-[10px] font-bold text-text-muted uppercase tracking-widest">
+                                        {data.lastUpdated}
+                                    </span>
+                                    <CountdownRing refreshing={data.refreshing} />
+                                </div>
                             </div>
                         </div>
                         <MarketTable 
@@ -110,6 +165,7 @@ export default function LiveMarket() {
                             sort={data.sort} 
                             setSort={data.setSort} 
                             onSelect={handleSelect} 
+                            predictions={predictions}
                         />
                     </div>
                 </>
@@ -120,7 +176,7 @@ export default function LiveMarket() {
 
 function LiveMarketSkeleton() {
     return (
-        <div className="max-w-7xl mx-auto space-y-8 animate-pulse">
+        <div className="max-w-[1600px] mx-auto space-y-8 animate-pulse">
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                 {[...Array(4)].map((_, i) => <div key={i} className="h-32 rounded-2xl bg-white/5" />)}
             </div>

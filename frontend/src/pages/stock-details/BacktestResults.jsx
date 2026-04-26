@@ -151,7 +151,7 @@ function StatCell({ icon: Icon, label, value, sub, color = '#94a3b8', accent, an
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
-export default function BacktestResults({ stats }) {
+export default function BacktestResults({ stats, isSidebar }) {
     if (!stats) return null;
 
     const {
@@ -162,202 +162,92 @@ export default function BacktestResults({ stats }) {
         equity_curve,
     } = stats;
 
+    // No meaningful backtest data — show empty state
+    const isEmpty = !total_trades || (return_pct === 0 && win_rate === 0 && total_trades === 0);
+    if (isEmpty) return (
+        <div className="rounded-3xl border border-dashed border-white/10 p-8 flex flex-col items-center gap-3 text-center"
+            style={{ background: 'rgba(8,15,26,0.4)' }}>
+            <BarChart2 className="w-8 h-8 text-slate-700" />
+            <p className="text-xs font-black text-slate-600 uppercase tracking-widest">Insufficient Backtest Data</p>
+            <p className="text-[11px] text-slate-700 max-w-xs leading-relaxed">
+                Not enough historical trades to generate a meaningful backtest for this asset.
+            </p>
+        </div>
+    );
+
     const isProfit    = return_pct >= 0;
     const pnl         = final_capital - initial_capital;
     const pnlAbs      = Math.abs(pnl);
     const wins        = Math.round(total_trades * win_rate / 100);
     const losses      = total_trades - wins;
-    // Use real profit_factor from backend if available, else approximate
     const profitFactor = profit_factor ?? (losses > 0 && wins > 0 ? (wins / losses) * 1.1 : 0);
 
     const rating = ratingOf(return_pct, win_rate, sharpe_ratio ?? 0);
     const RatingIcon = rating.icon;
 
     return (
-        <div className="rounded-2xl overflow-hidden border border-white/5 shadow-2xl"
-            style={{ background: '#080f1a' }}>
+        <div className={`rounded-3xl overflow-hidden border border-white/5 shadow-2xl backdrop-blur-xl`}
+            style={{ background: 'rgba(8, 15, 26, 0.6)' }}>
 
             {/* ── Header ──────────────────────────────────────────────────── */}
-            <div className="px-5 sm:px-6 pt-5 pb-4 border-b border-white/5 flex items-center justify-between gap-3">
+            <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl" style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.2)' }}>
+                    <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20">
                         <BarChart2 className="w-4 h-4 text-blue-400" />
                     </div>
                     <div>
-                        <h2 className="text-sm font-bold text-white leading-tight">Strategy Backtest</h2>
-                        <p className="text-[11px]" style={{ color: '#475569' }}>
-                            Simulated on full dataset · Rs.&nbsp;{initial_capital.toLocaleString()} starting capital
-                        </p>
+                        <h2 className="text-xs font-black text-white uppercase tracking-widest">Backtest</h2>
+                        <p className="text-[10px] text-slate-500 font-bold">Historical Simulation</p>
                     </div>
                 </div>
 
-                {/* Return badge */}
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl shrink-0 text-sm font-black"
-                    style={{ background: isProfit ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)', border: `1px solid ${isProfit ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`, color: isProfit ? '#10b981' : '#ef4444' }}>
-                    {isProfit ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black tracking-widest border ${isProfit ? 'bg-buy/10 text-buy border-buy/20' : 'bg-sell/10 text-sell border-sell/20'}`}>
                     {isProfit ? '+' : ''}{return_pct.toFixed(2)}%
                 </div>
             </div>
 
-            <div className="p-5 sm:p-6 space-y-4">
-
+            <div className="p-6 space-y-5">
                 {/* ── Equity Curve ──────────────────────────────────────────── */}
-                <div className="rounded-xl border border-white/5 px-4 pt-3 pb-2 overflow-hidden"
-                    style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="flex items-start justify-between mb-1">
-                        <div>
-                            <div className="flex items-center gap-1.5">
-                                <p className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>Equity Curve</p>
-                                {equity_curve?.length > 1 && (
-                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded" style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>
-                                        REAL DATA
-                                    </span>
-                                )}
-                            </div>
-                            <p className="text-[11px] font-bold mt-0.5" style={{ color: isProfit ? '#10b981' : '#ef4444' }}>
-                                {isProfit ? '+' : '−'}Rs.&nbsp;{pnlAbs.toLocaleString('en-IN', { maximumFractionDigits: 0 })} P&amp;L
-                            </p>
-                        </div>
-                        <div className="text-right">
-                            <p className="text-[10px]" style={{ color: '#475569' }}>Final</p>
-                            <p className="text-xs font-black text-white">Rs.&nbsp;{final_capital.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
-                        </div>
+                <div className="rounded-2xl border border-white/5 p-4 bg-black/20 overflow-hidden">
+                    <div className="flex items-center justify-between mb-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Equity Path</p>
+                        <span className="text-[10px] font-black text-white">Rs.{final_capital.toLocaleString()}</span>
                     </div>
                     <EquityCurve returnPct={return_pct} trades={total_trades} winRate={win_rate} realCurve={equity_curve} />
-                    <div className="flex justify-between text-[10px] mt-1" style={{ color: '#334155' }}>
-                        <span>Rs.&nbsp;{initial_capital.toLocaleString()}</span>
-                        <span>Rs.&nbsp;{final_capital.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</span>
-                    </div>
                 </div>
 
-                {/* ── Primary metrics grid ──────────────────────────────────── */}
+                {/* ── High Density Grid ─────────────────────────────────────── */}
                 <div className="grid grid-cols-2 gap-3">
-                    <StatCell
-                        icon={isProfit ? TrendingUp : TrendingDown}
-                        label="Total Return"
-                        value={return_pct}
-                        prefix={isProfit ? '+' : ''}
-                        suffix="%"
-                        sub={`Rs. ${pnlAbs.toLocaleString('en-IN', { maximumFractionDigits: 0 })} ${isProfit ? 'profit' : 'loss'}`}
-                        color={isProfit ? '#10b981' : '#ef4444'}
-                        accent animated decimals={2}
-                    />
-                    <StatCell
-                        icon={Crosshair}
-                        label="Win Rate"
-                        value={win_rate}
-                        suffix="%"
-                        sub={`${wins}W / ${losses}L of ${total_trades} trades`}
-                        color={win_rate >= 55 ? '#10b981' : win_rate >= 45 ? '#eab308' : '#ef4444'}
-                        accent animated decimals={1}
-                    />
-                    <StatCell
-                        icon={Activity}
-                        label="Total Trades"
-                        value={total_trades}
-                        sub="Buy → Sell cycles"
-                        color="#3b82f6"
-                        animated prefix="" suffix="" decimals={0}
-                    />
-                    <StatCell
-                        icon={Wallet}
-                        label="Final Capital"
-                        value={final_capital}
-                        prefix="Rs. "
-                        suffix=""
-                        sub={`Started Rs. ${initial_capital.toLocaleString()}`}
-                        color="#94a3b8"
-                        animated decimals={0}
-                    />
+                    <StatCell label="Net P&L" value={return_pct} prefix={isProfit ? '+' : ''} suffix="%" color={isProfit ? '#10b981' : '#ef4444'} accent animated icon={TrendingUp} />
+                    <StatCell label="Win Rate" value={win_rate} suffix="%" color={win_rate >= 50 ? '#10b981' : '#ef4444'} accent animated icon={Crosshair} />
+                    <StatCell label="Drawdown" value={max_drawdown || 0} prefix="-" suffix="%" color="#ef4444" icon={Shield} animated />
+                    <StatCell label="Sharpe" value={sharpe_ratio || 0} color="#3b82f6" icon={Zap} animated />
                 </div>
 
-                {/* ── Secondary metrics ─────────────────────────────────────── */}
-                <div className="grid grid-cols-2 gap-3">
-                    {max_drawdown != null && (
-                        <StatCell
-                            icon={Shield}
-                            label="Max Drawdown"
-                            value={max_drawdown}
-                            prefix="-"
-                            suffix="%"
-                            sub="Worst peak-to-trough drop"
-                            color="#ef4444"
-                            animated decimals={2}
-                        />
-                    )}
-                    {sharpe_ratio != null && (
-                        <StatCell
-                            icon={Zap}
-                            label="Sharpe Ratio"
-                            value={sharpe_ratio}
-                            sub={sharpe_ratio >= 1.5 ? 'Excellent risk-adj.' : sharpe_ratio >= 0.5 ? 'Acceptable' : 'Below average'}
-                            color={sharpe_ratio >= 1.5 ? '#10b981' : sharpe_ratio >= 0.5 ? '#eab308' : '#ef4444'}
-                            animated decimals={2}
-                        />
-                    )}
-                    {calmar_ratio != null && (
-                        <StatCell
-                            icon={Layers}
-                            label="Calmar Ratio"
-                            value={calmar_ratio}
-                            sub={calmar_ratio >= 1.5 ? 'Strong risk-adj. return' : calmar_ratio >= 0.5 ? 'Acceptable' : 'High drawdown risk'}
-                            color={calmar_ratio >= 1.5 ? '#10b981' : calmar_ratio >= 0.5 ? '#eab308' : '#ef4444'}
-                            animated decimals={2}
-                        />
-                    )}
-                    <StatCell
-                        icon={Percent}
-                        label="Profit Factor"
-                        value={profitFactor > 0 ? profitFactor.toFixed(2) : '—'}
-                        sub={profitFactor >= 2 ? 'Strong edge' : profitFactor >= 1 ? 'Positive edge' : 'No edge'}
-                        color={profitFactor >= 2 ? '#10b981' : profitFactor >= 1 ? '#eab308' : '#ef4444'}
-                    />
-                    {commission_paid != null && commission_paid > 0 && (
-                        <StatCell
-                            icon={Receipt}
-                            label="Commission Paid"
-                            value={`Rs. ${commission_paid.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
-                            sub="NEPSE 0.4% per trade side"
-                            color="#64748b"
-                        />
-                    )}
-                </div>
-
-                {/* ── Win/loss bar ──────────────────────────────────────────── */}
-                <div className="rounded-xl p-4 border border-white/5"
-                    style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <p className="text-[10px] font-semibold uppercase tracking-widest mb-3" style={{ color: '#475569' }}>
-                        Win / Loss Distribution
-                    </p>
+                {/* ── Win/Loss Bar ──────────────────────────────────────────── */}
+                <div className="rounded-2xl p-4 border border-white/5 bg-black/10">
                     <WinLossBar winRate={win_rate} totalTrades={total_trades} />
                 </div>
 
-                {/* ── Strategy rating ───────────────────────────────────────── */}
-                <div className="flex items-center gap-3 rounded-xl p-4 border"
+                {/* ── Rating ────────────────────────────────────────────────── */}
+                <div className="flex items-center gap-4 rounded-2xl p-4 border"
                     style={{ background: rating.bg, borderColor: rating.border }}>
-                    <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 text-2xl font-black"
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-xl font-black"
                         style={{ background: `${rating.color}20`, border: `1px solid ${rating.color}40`, color: rating.color }}>
                         {rating.grade}
                     </div>
                     <div className="flex-1">
-                        <p className="text-sm font-black" style={{ color: rating.color }}>
-                            {rating.label} Strategy
+                        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: rating.color }}>
+                            {rating.label} Score
                         </p>
-                        <p className="text-[11px] mt-0.5" style={{ color: '#475569' }}>
-                            {rating.label === 'Excellent' && 'Strong returns, good win rate, solid risk-adjusted performance.'}
-                            {rating.label === 'Good'      && 'Profitable strategy with room for optimization.'}
-                            {rating.label === 'Average'   && 'Marginal performance — consider refining entry/exit rules.'}
-                            {rating.label === 'Poor'      && 'Strategy underperformed — more data or tuning needed.'}
+                        <p className="text-[10px] font-bold text-slate-400 mt-1 line-clamp-2 leading-relaxed">
+                            {rating.label === 'Excellent' && 'Institutional grade performance with high risk-adjusted efficiency.'}
+                            {rating.label === 'Good'      && 'Consistent edge detected. Strategy is statistically viable.'}
+                            {rating.label === 'Average'   && 'Marginal edge. Consider adding confirmation filters.'}
+                            {rating.label === 'Poor'      && 'Strategy lacks consistent edge. Higher volatility detected.'}
                         </p>
                     </div>
-                    <RatingIcon className="w-5 h-5 shrink-0" style={{ color: rating.color }} />
                 </div>
-
-                {/* ── Disclaimer ────────────────────────────────────────────── */}
-                <p className="text-[10px] text-center px-2 leading-relaxed" style={{ color: '#334155' }}>
-                    Backtest is simulated on historical data and does not guarantee future results.
-                    Past performance is not indicative of future returns.
-                </p>
             </div>
         </div>
     );

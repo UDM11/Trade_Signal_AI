@@ -245,7 +245,7 @@ Respond with ONLY a valid JSON object. No markdown fences. No extra text. Start 
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
@@ -271,19 +271,19 @@ Respond with ONLY a valid JSON object. No markdown fences. No extra text. Start 
         data = json.loads(raw)
 
         return _build_result(
-            explanation     = str(data.get("explanation",      "")),
-            market_structure= str(data.get("market_structure", fb_structure)),
-            ideal_entry     = float(data.get("ideal_entry",    fb_ideal)),
-            entry_zone_low  = float(data.get("entry_zone_low", fb_zone_low)),
-            entry_zone_high = float(data.get("entry_zone_high",fb_zone_high)),
-            entry_condition = str(data.get("entry_condition",  fb_entry_cond)),
-            target1         = float(data.get("target1",        fb_t1)),
-            target2         = float(data.get("target2",        fb_t2)),
-            stop_loss       = float(data.get("stop_loss",      fb_sl)),
-            trailing_stop   = float(data.get("trailing_stop",  fb_trail)),
-            estimated_days  = int(data.get("estimated_days",   fb_days)),
-            exit_condition  = str(data.get("exit_condition",   fb_exit_cond)),
-            risk_note       = str(data.get("risk_note",        fb_risk)),
+            explanation     = str(data.get("explanation") or ""),
+            market_structure= str(data.get("market_structure") or fb_structure),
+            ideal_entry     = float(data.get("ideal_entry") or fb_ideal),
+            entry_zone_low  = float(data.get("entry_zone_low") or fb_zone_low),
+            entry_zone_high = float(data.get("entry_zone_high") or fb_zone_high),
+            entry_condition = str(data.get("entry_condition") or fb_entry_cond),
+            target1         = float(data.get("target1") or fb_t1),
+            target2         = float(data.get("target2") or fb_t2),
+            stop_loss       = float(data.get("stop_loss") or fb_sl),
+            trailing_stop   = float(data.get("trailing_stop") or fb_trail),
+            estimated_days  = int(float(data.get("estimated_days") or fb_days)),
+            exit_condition  = str(data.get("exit_condition") or fb_exit_cond),
+            risk_note       = str(data.get("risk_note") or fb_risk),
             current         = current,
         )
 

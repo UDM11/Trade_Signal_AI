@@ -8,36 +8,53 @@ import ScreenerPage from './pages/ScreenerPage';
 import Toast from './components/ui/Toast';
 import { ToastProvider } from './contexts/ToastContext';
 import { MarketProvider } from './hooks/useMarketSocket.jsx';
+import { api } from './api';
 
-function getPageFromUrl() {
+function getPageInfoFromUrl() {
     const path = window.location.pathname;
-    if (path === '/live'    || path.startsWith('/live/'))    return 'live';
-    if (path === '/signal')                                  return 'dashboard';
-    if (path === '/history' || path.startsWith('/history/')) return 'history';
-    if (path === '/screener')                                return 'screener';
-    return 'home';
+    const parts = path.split('/').filter(Boolean);
+    
+    let page = 'home';
+    let symbol = null;
+
+    if (parts[0] === 'live') {
+        page = 'live';
+        symbol = parts[1] || null;
+    } else if (parts[0] === 'signal') {
+        page = 'dashboard';
+    } else if (parts[0] === 'history') {
+        page = 'history';
+        symbol = parts[1] || null;
+    } else if (parts[0] === 'screener') {
+        page = 'screener';
+    }
+
+    return { page, symbol };
 }
 
 export default function App() {
-    const [page, setPage] = useState(getPageFromUrl);
-    const [screenerRecord, setScreenerRecord] = useState(null);
+    const [{ page, symbol }, setUrlInfo] = useState(getPageInfoFromUrl());
 
-    const navigate = (key) => {
-        setPage(key);
-        const paths = { live: '/live', dashboard: '/signal', history: '/history', screener: '/screener' };
-        window.history.pushState({ page: key }, '', paths[key] ?? '/');
+    const navigate = (key, sub = null) => {
+        const paths = { home: '/', live: '/live', dashboard: '/signal', history: '/history', screener: '/screener' };
+        let fullPath = paths[key] ?? '/';
+        if (sub) fullPath += `/${sub}`;
+        
+        window.history.pushState({ page: key, symbol: sub }, '', fullPath);
+        setUrlInfo({ page: key, symbol: sub });
     };
 
     useEffect(() => {
-        const onPop = () => setPage(getPageFromUrl());
+        const onPop = () => setUrlInfo(getPageInfoFromUrl());
         window.addEventListener('popstate', onPop);
         return () => window.removeEventListener('popstate', onPop);
     }, []);
 
-    const handleScreenerSelect = (record) => {
-        setScreenerRecord(record);
-        navigate('dashboard');
-    };
+    useEffect(() => {
+        // Trigger EOD Sync when app opens after market close
+        api.syncEOD().catch(err => console.error("Auto-sync check failed:", err));
+    }, []);
+
 
     return (
         <ToastProvider>
@@ -45,11 +62,12 @@ export default function App() {
                 <div className="min-h-screen bg-background text-text font-sans selection:bg-primary/30">
                     <Navbar page={page} setPage={navigate} />
                     <div className="p-4 sm:p-6 md:p-8">
-                        {page === 'home'      && <HomePage setPage={navigate} />}
-                        {page === 'dashboard' && <SignalPage initialRecord={screenerRecord} />}
-                        {page === 'live'      && <LiveMarketPage />}
-                        {page === 'history'   && <HistoryPage />}
-                        {page === 'screener'  && <ScreenerPage onSelectStock={handleScreenerSelect} />}
+                        {/* Pages stay mounted — CSS hide/show preserves state & avoids remount delays */}
+                        <div className={page === 'home'      ? '' : 'hidden'}><HomePage setPage={navigate} /></div>
+                        <div className={page === 'dashboard' ? '' : 'hidden'}><SignalPage /></div>
+                        <div className={page === 'live'      ? '' : 'hidden'}><LiveMarketPage symbol={symbol} /></div>
+                        <div className={page === 'history'   ? '' : 'hidden'}><HistoryPage symbol={symbol} /></div>
+                        <div className={page === 'screener'  ? '' : 'hidden'}><ScreenerPage /></div>
                     </div>
                 </div>
             </MarketProvider>

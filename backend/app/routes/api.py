@@ -100,7 +100,7 @@ def _upsert_local(symbol: str, payload: dict) -> None:
         records[idx] = entry
     else:
         records.insert(0, entry)
-    _save_local_history(records)
+    # _save_local_history(records) # Removed as per user request to use only Supabase
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
@@ -368,6 +368,52 @@ async def trigger_predictions(symbols: list[str] | None = None):
     return {"status": "started", "detail": "Market scan started."}
 
 
+@router.get("/predictions/status")
+async def get_predictions_status():
+    """Returns the current state of the prediction engine (running, last run, etc.)"""
+    from app.services.scheduler import _job_status
+    return _job_status
+
+
+_LAST_EOD_SYNC_DATE = None
+
+@router.get("/nepse/sync-eod")
+async def trigger_eod_sync():
+    """
+    Called on app startup. Checks if market is closed and past 15:15 NPT.
+    If so, triggers the EOD OHLCV data dump to ensure Supabase is up to date.
+    """
+    global _LAST_EOD_SYNC_DATE
+    from app.services.nepse_service import is_market_open, _npt_now
+    from app.services.scheduler import run_daily_ohlcv_dump
+    
+    now = _npt_now()
+    today = now.strftime("%Y-%m-%d")
+    
+    # Only sync if:
+    # 1. Market is closed
+    # 2. It's after 3:15 PM (15:15) NPT
+    # 3. We haven't successfully synced today yet
+    if not is_market_open() and now.hour >= 15 and (now.hour > 15 or now.minute >= 15):
+        if _LAST_EOD_SYNC_DATE != today:
+            _LAST_EOD_SYNC_DATE = today
+            asyncio.create_task(run_daily_ohlcv_dump())
+            return {"status": "sync_started", "date": today}
+    
+    return {"status": "skipped", "reason": "Market open or already synced today", "date": today}
+
+
+@router.post("/predictions/retrain")
+async def manual_retrain():
+    """Manually trigger the deep AI retraining process."""
+    from app.services.scheduler import run_weekly_retraining, _job_status
+    if _job_status["running"]:
+        return {"error": "A task is already running"}
+    
+    asyncio.create_task(run_weekly_retraining())
+    return {"status": "Retraining started in background"}
+
+
 # ── NEPSE Live Market Routes ───────────────────────────────────────────────────
 
 @router.get("/nepse/status")
@@ -415,6 +461,20 @@ async def nepse_chart(request: Request, symbol: str):
         logger.error("nepse_chart error: %s", e)
         return {"error": str(e)}
 
+@router.get("/nepse/intraday/{symbol}")
+@limiter.limit("20/minute")
+async def nepse_intraday(request: Request, symbol: str):
+    """1-minute OHLCV for a single NEPSE symbol."""
+    from app.services.nepse_service import get_stock_intraday
+    try:
+        result = await asyncio.wait_for(get_stock_intraday(symbol), timeout=20.0)
+        return result
+    except asyncio.TimeoutError:
+        return {"error": "Intraday fetch timed out."}
+    except Exception as e:
+        logger.error("nepse_intraday error: %s", e)
+        return {"error": str(e)}
+
 @router.get("/nepse/quote/{symbol}")
 @limiter.limit("120/minute")
 async def nepse_quote(request: Request, symbol: str):
@@ -438,3 +498,40 @@ async def nepse_history(request: Request):
     except Exception as e:
         logger.error("nepse_history error: %s", e)
         return {"error": str(e)}
+@router.get("/nepse/analyze/{symbol}")
+@limiter.limit("5/minute")
+async def analyze_stock_deep(request: Request, symbol: str):
+    """
+    Triggers an on-demand, deep institutional analysis for a single symbol.
+    Fetches latest history, news, calculates 40+ indicators, and runs the AI ensemble.
+    """
+    from app.services.scheduler import _predict_one
+    from app.model import _get_latest_model_path
+    import joblib
+
+    symbol = symbol.strip().upper()
+    try:
+        # Load global model if available for consistency
+        global_artifacts = None
+        latest_model = _get_latest_model_path()
+        if latest_model:
+            try:
+                global_artifacts = joblib.load(latest_model)
+            except: pass
+
+        # Run the full pipeline
+        # _predict_one now returns the full payload dict
+        result = await _predict_one(symbol, global_artifacts)
+        
+        if "error" in result and result.get("prediction") == "ERROR":
+            raise HTTPException(status_code=400, detail=f"Analysis failed for {symbol}: {result.get('error')}")
+
+        if result in ("NO_DATA", "INSUFFICIENT", "ERROR"):
+            raise HTTPException(status_code=400, detail=f"Analysis failed for {symbol}: {result}")
+
+        return result
+
+    except HTTPException: raise
+    except Exception as e:
+        logger.error("Deep analysis endpoint error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))

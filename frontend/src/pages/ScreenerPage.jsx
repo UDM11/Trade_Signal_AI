@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     TrendingUp, TrendingDown, Minus, RefreshCw, SlidersHorizontal,
     ChevronUp, ChevronDown, Search, X, Target, Shield, Zap,
-    BarChart2, Activity, ArrowRight, Filter, LayoutGrid, List
+    BarChart2, Activity, ArrowRight, Filter, LayoutGrid, List,
+    ArrowUpNarrowWide, ArrowDownWideNarrow, Info
 } from 'lucide-react';
-import { api } from '../api';
 import { fmt } from '../utils/formatters';
+import { getCached, fetchPredictions, isStale } from '../cache/predictionsCache';
+import StockDetailsPage from './stock-details';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtPrice(n) { return n != null ? `Rs.${fmt(n)}` : '—'; }
@@ -20,68 +22,113 @@ const SIG = {
 const SORT_INIT = { key: 'confidence_score', dir: -1 };
 const FILTER_DEFAULTS = { signal: 'ALL', minConf: 0, minRR: 0, minTarget: 0, maxSL: 20 };
 
+function buildResult(record) {
+    const ai = record.ai_analysis || {};
+    return {
+        symbol:            record.stocks?.symbol || record.symbol || 'UNKNOWN',
+        prediction:        record.prediction,
+        confidence:        record.confidence_score ?? record.confidence,
+        explanation:       record.explanation,
+        target_price:      record.target_price      ?? null,
+        stop_loss:         record.stop_loss          ?? null,
+        estimated_days:    record.estimated_days     ?? null,
+        target_pct:        record.target_pct         ?? null,
+        stop_loss_pct:     record.stop_loss_pct      ?? null,
+        risk_reward:       record.risk_reward         ?? null,
+        all_proba:         record.all_proba           ?? null,
+        indicators:        record.indicators          ?? null,
+        model_metrics:     record.model_metrics       ?? null,
+        ideal_entry:       ai.ideal_entry          ?? null,
+        entry_zone_low:    ai.entry_zone_low       ?? null,
+        entry_zone_high:   ai.entry_zone_high      ?? null,
+        entry_condition:   ai.entry_condition      ?? null,
+        target2:           ai.target2              ?? null,
+        trailing_stop:     ai.trailing_stop        ?? null,
+        signal_history:    record.signal_history   || [],
+        chartData:         record.chart_data       || [],
+        backtest:          record.backtest         || record.backtest_stats || null
+    };
+}
+
 // ── Filter Panel ──────────────────────────────────────────────────────────────
 function FilterPanel({ filters, setFilters, counts, onReset }) {
     const set = (k, v) => setFilters(f => ({ ...f, [k]: v }));
 
     return (
-        <div className="rounded-2xl p-4 sm:p-5 space-y-6 shadow-2xl backdrop-blur-xl transition-shadow duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]"
-            style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-            <div className="flex items-center justify-between pb-3 border-b border-white/5">
-                <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-blue-400" />
-                    <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-widest">Screener Filters</span>
+        <div className="rounded-lg sm:rounded-xl p-3.5 sm:p-5 space-y-4 sm:space-y-7 shadow-2xl backdrop-blur-2xl transition-all duration-300"
+            style={{ background: 'rgba(8, 15, 26, 0.8)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            <div className="flex items-center justify-between pb-2 sm:pb-4 border-b border-white/5">
+                <div className="flex items-center gap-1.5 sm:gap-2.5">
+                    <div className="p-1 sm:p-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                        <Filter className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" />
+                    </div>
+                    <span className="text-[9px] sm:text-xs font-black text-white uppercase tracking-widest">Global Filters</span>
                 </div>
-                <button onClick={onReset} className="text-[10px] font-black text-slate-500 hover:text-white uppercase tracking-widest transition-colors">
+                <button onClick={onReset} className="text-[8px] sm:text-[10px] font-black text-slate-500 hover:text-white uppercase tracking-widest transition-colors py-1 px-2 rounded-lg hover:bg-white/5">
                     Reset
                 </button>
             </div>
 
             {/* Signal Selection */}
             <div>
-                <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest mb-3 text-slate-500">Market Signal</p>
-                <div className="grid grid-cols-2 gap-2">
+                <p className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest mb-2 sm:mb-4 text-slate-500 flex items-center gap-1.5">
+                    <Activity className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Market Signal
+                </p>
+                <div className="grid grid-cols-2 gap-1.5 sm:gap-2.5">
                     {['ALL', 'BUY', 'HOLD', 'SELL'].map(s => {
                         const active = filters.signal === s;
                         const cfg = SIG[s] || {};
                         return (
                             <button key={s} onClick={() => set('signal', s)}
-                                className={`flex items-center justify-between px-2.5 py-2 sm:px-3 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-black transition-all border ${
-                                    active ? 'bg-blue-600/10 border-blue-500/40 text-white shadow-lg shadow-blue-500/5' : 'bg-white/5 border-transparent text-slate-400 hover:bg-white/10'
+                                className={`flex items-center justify-between px-2 sm:px-3 py-2 sm:py-3 rounded-lg text-[9px] sm:text-xs font-black transition-all border ${
+                                    active ? 'bg-blue-600/15 border-blue-500/50 text-white shadow-[0_0_15px_rgba(59,130,246,0.1)]' : 'bg-white/5 border-transparent text-slate-400 hover:bg-white/10'
                                 }`}>
-                                <div className="flex items-center gap-1.5 sm:gap-2">
-                                    {cfg.Icon && <cfg.Icon className={`w-3 h-3 ${active ? cfg.color : ''}`} />}
-                                    <span>{s}</span>
+                                <div className="flex items-center gap-1 sm:gap-2">
+                                    {cfg.Icon && <cfg.Icon className={`w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 ${active ? cfg.color : ''}`} />}
+                                    <span className="tracking-tight">{s}</span>
                                 </div>
-                                {counts[s] > 0 && <span className="text-[9px] opacity-40">{counts[s]}</span>}
+                                {counts[s] > 0 && <span className="text-[7px] sm:text-[10px] font-bold opacity-40 tabular-nums">{counts[s]}</span>}
                             </button>
                         );
                     })}
                 </div>
             </div>
 
-            {/* Sliders */}
-            {[
-                { k: 'minConf',   l: 'Min Confidence', u: '%', min: 0, max: 99, step: 1,  c: '#3b82f6' },
-                { k: 'minRR',     l: 'Min Risk/Reward', u: 'x', min: 0, max: 5,  step: 0.1, c: '#8b5cf6' },
-                { k: 'minTarget', l: 'Min Target',     u: '%', min: 0, max: 30, step: 0.5, c: '#10b981' },
-                { k: 'maxSL',     l: 'Max Stop Loss',   u: '%', min: 1, max: 20, step: 0.5, c: '#ef4444' },
-            ].map(s => (
-                <div key={s.k} className="space-y-3">
-                    <div className="flex items-center justify-between">
-                        <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-slate-500">{s.l}</p>
-                        <span className="text-[10px] sm:text-xs font-black text-white px-2 py-0.5 rounded-lg bg-white/5 border border-white/5">
-                            {s.k === 'minTarget' ? '+' : ''}{filters[s.k]}{s.u}
-                        </span>
+            {/* Advanced Parameter Sliders */}
+            <div className="space-y-3 sm:space-y-6 pt-1">
+                {[
+                    { k: 'minConf',   l: 'Confidence', u: '%', min: 0, max: 99, step: 1,  c: '#3b82f6', icon: Zap },
+                    { k: 'minRR',     l: 'Risk/Reward', u: 'x', min: 0, max: 5,  step: 0.1, c: '#8b5cf6', icon: Target },
+                    { k: 'minTarget', l: 'Upside',     u: '%', min: 0, max: 30, step: 0.5, c: '#10b981', icon: TrendingUp },
+                    { k: 'maxSL',     l: 'Risk Tol.',   u: '%', min: 1, max: 20, step: 0.5, c: '#ef4444', icon: Shield },
+                ].map(s => (
+                    <div key={s.k} className="space-y-1.5 sm:space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1 sm:gap-2">
+                                <s.icon className="w-2 sm:w-3 h-2 sm:h-3 text-slate-500" />
+                                <p className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest text-slate-500">{s.l}</p>
+                            </div>
+                            <span className="text-[8px] sm:text-xs font-black text-white tabular-nums px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10">
+                                {s.k === 'minTarget' ? '≥ ' : s.k === 'maxSL' ? '≤ ' : ''}{filters[s.k]}{s.u}
+                            </span>
+                        </div>
+                        <div className="relative h-3 sm:h-6 flex items-center">
+                            <input type="range" min={s.min} max={s.max} step={s.step} value={filters[s.k]}
+                                onChange={e => set(s.k, +e.target.value)}
+                                className="w-full h-1 sm:h-1.5 rounded-full appearance-none cursor-pointer bg-white/10 hover:bg-white/15 transition-all outline-none"
+                                style={{ accentColor: s.c }} />
+                        </div>
                     </div>
-                    <div className="relative group">
-                        <input type="range" min={s.min} max={s.max} step={s.step} value={filters[s.k]}
-                            onChange={e => set(s.k, +e.target.value)}
-                            className="w-full h-1.5 rounded-full appearance-none cursor-pointer bg-white/5 group-hover:bg-white/10 transition-colors"
-                            style={{ accentColor: s.c }} />
-                    </div>
-                </div>
-            ))}
+                ))}
+            </div>
+
+            {/* Pro Tip */}
+            <div className="p-2.5 sm:p-4 rounded-lg bg-blue-500/5 border border-blue-500/10 flex gap-2">
+                <Info className="w-3 h-3 text-blue-400 shrink-0" />
+                <p className="text-[8px] sm:text-[10px] text-slate-400 leading-tight font-medium">
+                    Adjust parameters for setups. We recommend <span className="text-blue-400 font-bold">Conf &gt; 75%</span>.
+                </p>
+            </div>
         </div>
     );
 }
@@ -91,26 +138,32 @@ function HeatmapBlock({ r, onClick }) {
     const sig = SIG[r.prediction] || SIG.HOLD;
     const conf = +(r.confidence_score ?? 0);
     const sym = r.stocks?.symbol || r.symbol || '?';
-    const alpha = 0.08 + (conf / 100) * 0.4;
 
     return (
         <button onClick={() => onClick(r)}
-            className={`group relative rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)] flex flex-col items-center justify-center p-3 text-center`}
+            className="group relative rounded-xl sm:rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-3.5 text-center aspect-square sm:aspect-auto sm:h-32"
             style={{
-                background: 'var(--color-glass)',
+                background: 'rgba(8, 15, 26, 0.4)',
                 border: `1px solid ${sig.borderC}`,
-                minHeight: '80px',
             }}>
-            {/* Soft inner glow based on prediction */}
-            <div className="absolute inset-0 pointer-events-none opacity-20 group-hover:opacity-40 transition-opacity duration-500"
-                style={{ background: `radial-gradient(circle at 50% 100%, ${sig.borderC}, transparent 70%)` }} />
+            <div className="absolute inset-0 pointer-events-none opacity-5 group-hover:opacity-20 transition-opacity duration-700"
+                style={{ background: `radial-gradient(circle at center, ${sig.borderC}, transparent 80%)` }} />
             
-            <div className="relative z-10">
-            <p className="text-[11px] sm:text-xs font-black text-white leading-tight">{sym}</p>
-            <p className={`text-[9px] sm:text-[10px] mt-1 font-black uppercase tracking-tighter ${sig.color}`}>{r.prediction}</p>
-            <div className="mt-2 w-full bg-black/20 h-1 rounded-full overflow-hidden">
-                <div className={`h-full ${r.prediction === 'BUY' ? 'bg-buy shadow-[0_0_8px_rgba(16,185,129,0.8)]' : r.prediction === 'SELL' ? 'bg-sell shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 'bg-hold shadow-[0_0_8px_rgba(245,158,11,0.8)]'}`} style={{ width: `${conf}%` }} />
-            </div>
+            <div className="relative z-10 w-full">
+                <p className="text-sm sm:text-base font-black text-white group-hover:scale-105 transition-transform duration-300 uppercase">{sym}</p>
+                <div className="flex items-center justify-center gap-1 mt-1">
+                    <sig.Icon className={`w-2.5 h-2.5 ${sig.color}`} />
+                    <p className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest ${sig.color}`}>{r.prediction}</p>
+                </div>
+                
+                <div className="mt-3 w-full bg-white/5 h-1 rounded-full overflow-hidden border border-white/5">
+                    <div className={`h-full transition-all duration-1000 ${
+                        r.prediction === 'BUY' ? 'bg-buy shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 
+                        r.prediction === 'SELL' ? 'bg-sell shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 
+                        'bg-hold shadow-[0_0_8px_rgba(245,158,11,0.8)]'
+                    }`} style={{ width: `${conf}%` }} />
+                </div>
+                <p className="text-[7px] sm:text-[9px] font-bold text-slate-500 mt-1.5 tracking-widest tabular-nums">{conf.toFixed(0)}% CONF</p>
             </div>
         </button>
     );
@@ -126,104 +179,171 @@ function TableRow({ r, rank, onSelect }) {
     const latestClose = r.chart_data?.length ? r.chart_data[r.chart_data.length - 1]?.close : null;
 
     return (
-        <tr className="border-b transition-colors cursor-pointer group hover:bg-white/5"
-            style={{ borderColor: 'var(--color-glass-border)' }}
+        <tr className="border-b transition-all cursor-pointer group hover:bg-white/[0.03]"
+            style={{ borderColor: 'rgba(255, 255, 255, 0.05)' }}
             onClick={() => onSelect(r)}>
-            <td className="px-4 py-4 text-[10px] font-black text-slate-600 tabular-nums">{rank}</td>
-            <td className="px-4 py-4">
-                <div className="flex items-center gap-3">
-                    <div className={`w-1 h-8 rounded-full ${r.prediction === 'BUY' ? 'bg-buy' : r.prediction === 'SELL' ? 'bg-sell' : 'bg-hold'} opacity-40 group-hover:opacity-100 transition-opacity`} />
-                    <span className="text-sm font-black text-white group-hover:text-blue-400 transition-colors uppercase tracking-tight">{sym}</span>
+            <td className="px-1.5 sm:px-5 py-3 sm:py-5 text-[9px] sm:text-[10px] font-black text-slate-600 tabular-nums">{rank}</td>
+            <td className="px-1.5 sm:px-5 py-3 sm:py-5">
+                <div className="flex items-center gap-1.5 sm:gap-4">
+                    <div className={`w-0.5 h-6 sm:w-1 sm:h-10 rounded-full ${r.prediction === 'BUY' ? 'bg-buy' : r.prediction === 'SELL' ? 'bg-sell' : 'bg-hold'} opacity-30 group-hover:opacity-100 transition-all`} />
+                    <div>
+                        <span className="text-sm sm:text-base font-black text-white group-hover:text-blue-400 transition-colors uppercase tracking-tight block truncate max-w-[70px] sm:max-w-none">{sym}</span>
+                        <span className="text-[8px] sm:text-[10px] font-bold text-slate-600 tracking-widest uppercase hidden xs:block">Equity</span>
+                    </div>
                 </div>
             </td>
-            <td className="px-4 py-4">
-                <div className={`flex items-center gap-1.5 w-fit px-3 py-1.5 rounded-xl border ${sig.border} ${sig.bg} shadow-lg shadow-black/20`}>
-                    <sig.Icon className={`w-3 h-3 ${sig.color}`} />
-                    <span className={`text-[10px] sm:text-[11px] font-black tracking-widest ${sig.color}`}>{r.prediction}</span>
+            <td className="px-1.5 sm:px-5 py-3 sm:py-5">
+                <div className={`flex items-center gap-1 sm:gap-2 w-fit px-1.5 sm:px-3.5 py-1 sm:py-2 rounded-md sm:rounded-xl border ${sig.border} ${sig.bg} shadow-sm sm:shadow-lg shadow-black/20`}>
+                    <sig.Icon className={`w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 ${sig.color}`} />
+                    <span className={`text-[9px] sm:text-[10px] font-black tracking-widest uppercase ${sig.color}`}>{r.prediction === 'HOLD' ? 'HLD' : r.prediction}</span>
                 </div>
             </td>
-            <td className="px-4 py-4">
-                <div className="flex items-center gap-3">
-                    <div className="hidden sm:block w-20 h-1.5 rounded-full bg-white/5 overflow-hidden">
+            <td className="px-3 sm:px-5 py-4 sm:py-5 hidden lg:table-cell">
+                <div className="flex items-center gap-4">
+                    <div className="hidden xl:block w-24 h-1.5 rounded-full bg-white/5 border border-white/5 overflow-hidden">
                         <div className={`h-full ${r.prediction === 'BUY' ? 'bg-buy' : r.prediction === 'SELL' ? 'bg-sell' : 'bg-hold'} transition-all duration-1000`} 
                              style={{ width: `${conf}%` }} />
                     </div>
-                    <span className={`text-[11px] font-black tabular-nums ${sig.color}`}>{conf.toFixed(1)}%</span>
+                    <span className={`text-xs font-black tabular-nums ${sig.color}`}>{conf.toFixed(1)}%</span>
                 </div>
             </td>
-            <td className="px-4 py-4 text-xs font-bold tabular-nums text-white/80">{fmtPrice(latestClose)}</td>
-            <td className="px-4 py-4">
+            <td className="px-1.5 sm:px-5 py-3 sm:py-5">
+                <span className="text-sm sm:text-base font-black tabular-nums text-white/90">{fmtPrice(latestClose)}</span>
+            </td>
+            <td className="px-3 sm:px-5 py-4 sm:py-5 hidden md:table-cell">
                 <div className="flex flex-col">
-                    <span className="text-xs font-black text-buy">{fmtPrice(r.target_price)}</span>
-                    <span className="text-[10px] font-bold text-buy/50">{pct(r.target_pct)}</span>
+                    <span className="text-xs sm:text-sm font-black text-buy tabular-nums">{fmtPrice(r.target_price)}</span>
+                    <span className="text-[9px] font-bold text-buy/50 tabular-nums">{pct(r.target_pct)}</span>
                 </div>
             </td>
-            <td className="px-4 py-4">
+            <td className="px-3 sm:px-5 py-4 sm:py-5 hidden xl:table-cell">
                 <div className="flex flex-col">
-                    <span className="text-xs font-black text-sell">{fmtPrice(r.stop_loss)}</span>
-                    <span className="text-[10px] font-bold text-sell/50">{r.stop_loss_pct != null ? `-${fmt(r.stop_loss_pct)}%` : '—'}</span>
+                    <span className="text-sm font-black text-sell tabular-nums">{fmtPrice(r.stop_loss)}</span>
+                    <span className="text-[10px] font-bold text-sell/50 tabular-nums">{r.stop_loss_pct != null ? `-${fmt(r.stop_loss_pct)}%` : '—'}</span>
                 </div>
             </td>
-            <td className="px-4 py-4"><span className={`text-sm font-black tabular-nums ${rrColor}`}>{rr != null ? `${fmt(rr)}x` : '—'}</span></td>
-            <td className="px-4 py-4 text-right">
-                <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all text-blue-400 inline" />
+            <td className="px-3 sm:px-5 py-4 sm:py-5 hidden md:table-cell">
+                <div className="flex flex-col items-center">
+                    <span className={`text-sm font-black tabular-nums ${rrColor}`}>{rr != null ? `${fmt(rr)}x` : '—'}</span>
+                    <div className="flex gap-0.5 mt-1">
+                        {[1, 2, 3].map(i => (
+                            <div key={i} className={`w-2.5 h-1 rounded-full ${rr >= i ? rrColor.replace('text-', 'bg-') : 'bg-white/10'}`} />
+                        ))}
+                    </div>
+                </div>
+            </td>
+            <td className="px-2 sm:px-5 py-3 sm:py-5 text-right">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/5 border border-white/5 flex items-center justify-center group-hover:bg-blue-600 group-hover:border-blue-500 transition-all">
+                    <ArrowRight className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-500 group-hover:text-white transition-colors" />
+                </div>
             </td>
         </tr>
     );
 }
 
+// ── Sort icon (outside component so React doesn't remount it every render) ────
+function SortIcon({ col, sort }) {
+    if (sort.key !== col) return <ChevronDown className="w-2.5 h-2.5 sm:w-3 sm:h-3 opacity-20" />;
+    return sort.dir === -1
+        ? <ArrowDownWideNarrow className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-blue-400" />
+        : <ArrowUpNarrowWide   className="w-3 sm:w-3.5 h-3 sm:h-3.5 text-blue-400" />;
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ScreenerPage({ onSelectStock }) {
-    const [records, setRecords] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [filters, setFilters] = useState(FILTER_DEFAULTS);
-    const [sort, setSort] = useState(SORT_INIT);
-    const [search, setSearch] = useState('');
-    const [view, setView] = useState('table'); 
+    const [records, setRecords]       = useState(() => getCached() || []);
+    const [loading, setLoading]       = useState(!getCached());
+    const [filters, setFilters]       = useState(FILTER_DEFAULTS);
+    const [sort, setSort]             = useState(SORT_INIT);
+    const [search, setSearch]         = useState('');
+    const [view, setView]             = useState('table');
     const [showFilters, setShowFilters] = useState(true);
+    const [selected, setSelected]     = useState(null);
+
+    const handleSelect = (record) => {
+        const sym = record.stocks?.symbol || record.symbol || 'UNKNOWN';
+        setSelected(buildResult(record));
+        window.history.pushState({ sym }, '', `/screener/${sym}`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleBack = () => {
+        setSelected(null);
+        window.history.pushState({}, '', '/screener');
+    };
+
+    useEffect(() => {
+        const onPop = () => {
+            const match = window.location.pathname.match(/^\/screener\/(.+)$/);
+            if (!match) setSelected(null);
+        };
+        window.addEventListener('popstate', onPop);
+        return () => window.removeEventListener('popstate', onPop);
+    }, []);
 
     const fetchData = useCallback(async (isBackground = false) => {
-        if (!isBackground) setLoading(true);
+        if (!isBackground && !getCached()) setLoading(true);
         try {
-            const res = await api.getHistory();
-            setRecords(res.data.data || []);
+            const data = await fetchPredictions();
+            setRecords(data);
         } catch { /* silent */ } finally {
-            if (!isBackground) setLoading(false);
+            setLoading(false);
         }
     }, []);
 
     useEffect(() => {
-        fetchData();
-        const tid = setInterval(() => fetchData(true), 10000);
+        if (isStale()) fetchData(!!getCached());
+        const tid = setInterval(() => fetchData(true), 30_000);
+
+        // Check if we should auto-open a stock from URL
+        const match = window.location.pathname.match(/^\/screener\/(.+)$/);
+        if (match && records.length) {
+            const sym = match[1].toUpperCase();
+            const rec = records.find(r => (r.stocks?.symbol || r.symbol || '').toUpperCase() === sym);
+            if (rec) setSelected(buildResult(rec));
+        }
+
         return () => clearInterval(tid);
-    }, [fetchData]);
+    }, [fetchData, records.length]);
 
     const filtered = useMemo(() => {
         let list = records.filter(r => {
             const sym = (r.stocks?.symbol || r.symbol || '').toUpperCase();
             const conf = +(r.confidence_score ?? 0);
-            const rr = +(r.risk_reward ?? 0);
-            const tgt = +(r.target_pct ?? 0);
-            const sl = Math.abs(+(r.stop_loss_pct ?? 99));
+            const rr   = +(r.risk_reward ?? 0);
+            const tgt = Math.abs(+(r.target_pct ?? 0));
+            const sl  = r.stop_loss_pct != null ? Math.abs(+(r.stop_loss_pct)) : 0;
 
             return (
                 (filters.signal === 'ALL' || r.prediction === filters.signal) &&
                 conf >= filters.minConf &&
-                rr >= filters.minRR &&
-                tgt >= filters.minTarget &&
-                sl <= filters.maxSL &&
+                rr   >= filters.minRR &&
+                tgt  >= filters.minTarget &&
+                sl   <= filters.maxSL &&
                 (!search || sym.includes(search.toUpperCase()))
             );
         });
 
         list = [...list].sort((a, b) => {
+            if (sort.key === 'symbol') {
+                const as = (a.stocks?.symbol || a.symbol || '').toUpperCase();
+                const bs = (b.stocks?.symbol || b.symbol || '').toUpperCase();
+                return sort.dir * as.localeCompare(bs);
+            }
             const av = a[sort.key] ?? a.ai_analysis?.[sort.key] ?? 0;
             const bv = b[sort.key] ?? b.ai_analysis?.[sort.key] ?? 0;
-            return sort.dir * (bv - av);
+            return sort.dir * (bv > av ? 1 : bv < av ? -1 : 0);
         });
 
         return list;
     }, [records, filters, sort, search]);
+
+    const handleSort = (key) => {
+        setSort(prev => ({
+            key,
+            dir: prev.key === key ? -prev.dir : -1
+        }));
+    };
 
     const stats = useMemo(() => {
         const buys = filtered.filter(r => r.prediction === 'BUY').length;
@@ -232,103 +352,102 @@ export default function ScreenerPage({ onSelectStock }) {
         return { total: filtered.length, buys, avgConf, avgRR };
     }, [filtered]);
 
+    if (selected) {
+        return (
+            <main className="max-w-[1600px] mx-auto px-1.5 sm:px-8 pt-4 sm:pt-8 pb-32">
+                <StockDetailsPage selected={selected} onBack={handleBack} />
+            </main>
+        );
+    }
+
     if (loading) {
         return (
-            <main className="max-w-[1600px] mx-auto p-4 sm:p-6 md:p-8 space-y-8 animate-pulse">
-                <div className="h-44 bg-white/5 rounded-2xl w-full" />
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                    <div className="h-[400px] bg-white/5 rounded-2xl" />
-                    <div className="lg:col-span-3 h-[400px] bg-white/5 rounded-2xl" />
+            <main className="max-w-[1600px] mx-auto p-2.5 sm:p-8 space-y-6 sm:space-y-10 animate-pulse">
+                <div className="h-32 sm:h-44 bg-white/5 rounded-2xl sm:rounded-3xl w-full" />
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 sm:gap-8">
+                    <div className="h-64 lg:h-[500px] bg-white/5 rounded-2xl sm:rounded-3xl" />
+                    <div className="lg:col-span-3 h-64 lg:h-[500px] bg-white/5 rounded-2xl sm:rounded-3xl" />
                 </div>
             </main>
         );
     }
 
     return (
-        <main className="max-w-[1600px] mx-auto p-4 sm:p-6 md:p-8 pb-20">
-            {/* Consolidated Header Panel */}
-            <div className="relative p-4 sm:p-6 rounded-2xl shadow-xl mb-6 overflow-hidden transition-shadow duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]" style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-                <div className="absolute top-0 left-0 right-0 h-[2px] opacity-60" style={{ background: 'linear-gradient(90deg, transparent, #3b82f6, transparent)' }} />
-                <div className="flex flex-col lg:flex-row gap-4 items-center relative z-10">
-                    {/* Search & Status Indicator */}
-                    <div className="relative flex-1 w-full flex items-center gap-4">
-                        <div className="relative flex-1">
-                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+        <main className="max-w-[1600px] mx-auto px-1.5 sm:px-8 pt-2 sm:pt-8 pb-32">
+            {/* ── Elite Header Dashboard ────────────────────────────────────── */}
+            <div className="relative p-3 sm:p-5 rounded-lg sm:rounded-xl shadow-2xl mb-4 sm:mb-8 overflow-hidden" 
+                style={{ background: 'rgba(8, 15, 26, 0.6)', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(40px)' }}>
+                <div className="absolute top-0 left-0 right-0 h-[2px] opacity-40" style={{ background: 'linear-gradient(90deg, transparent, #3b82f6, transparent)' }} />
+                
+                <div className="flex flex-col lg:flex-row gap-3 sm:gap-5 items-center relative z-10">
+                    <div className="flex-1 w-full">
+                        <div className="relative group">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-slate-500 group-focus-within:text-blue-400 transition-colors" />
                             <input
                                 type="text"
-                                placeholder="Search symbol or keyword..."
+                                placeholder="Search symbol..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-12 pr-4 text-sm font-bold text-white outline-none focus:border-blue-500/40 focus:bg-white/10 transition-all placeholder:text-slate-600"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg sm:rounded-xl py-1.5 sm:py-2.5 pl-10 sm:pl-14 pr-6 text-xs sm:text-base font-bold text-white outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all placeholder:text-slate-600 shadow-inner"
                             />
-                        </div>
-                        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 whitespace-nowrap">
-                            <span className="relative flex h-2 w-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                                <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500"></span>
-                            </span>
-                            <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Live Sync</span>
                         </div>
                     </div>
 
-                    {/* Controls Row */}
-                    <div className="flex items-center gap-2 w-full lg:w-auto overflow-x-auto no-scrollbar pb-1 lg:pb-0">
-                        {/* View toggle */}
-                        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/5 border border-white/5 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto">
+                        <div className="flex items-center gap-0.5 p-0.5 rounded-lg sm:rounded-xl bg-black/40 border border-white/5 shrink-0 w-full sm:w-auto">
                             {[
                                 { k: 'table', icon: List, label: 'Table' },
-                                { k: 'heatmap', icon: LayoutGrid, label: 'Heatmap' }
+                                { k: 'heatmap', icon: LayoutGrid, label: 'Grid' }
                             ].map(v => (
                                 <button key={v.k} onClick={() => setView(v.k)}
-                                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                                        view === v.k ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-slate-500 hover:text-white'
+                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-6 py-1.5 sm:py-2 rounded-md sm:rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-widest transition-all ${
+                                        view === v.k ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/20' : 'text-slate-500 hover:text-white'
                                     }`}>
-                                    <v.icon className="w-3.5 h-3.5" />
-                                    <span>{v.label}</span>
+                                    <v.icon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                    <span className="hidden xs:inline">{v.label}</span>
+                                    <span className="xs:hidden uppercase">{v.k}</span>
                                 </button>
                             ))}
                         </div>
                         
-                        <button onClick={() => setShowFilters(!showFilters)}
-                            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all font-black text-[10px] uppercase tracking-widest shrink-0 ${
-                                showFilters ? 'bg-blue-600/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-slate-500 hover:text-white'
-                            }`}>
-                            <SlidersHorizontal className="w-3.5 h-3.5" />
-                            <span>Filters</span>
-                        </button>
-
-                        <button onClick={fetchData} className="p-3 rounded-xl bg-white/5 border border-white/5 text-slate-400 hover:text-white transition-all hover:bg-white/10 shrink-0">
-                            <RefreshCw className="w-4 h-4" />
-                        </button>
+                        <div className="flex gap-1.5 w-full sm:w-auto">
+                            <button onClick={() => setShowFilters(!showFilters)}
+                                className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 sm:px-6 py-1.5 sm:py-2 rounded-lg border transition-all font-black text-[10px] sm:text-xs uppercase tracking-widest ${
+                                    showFilters ? 'bg-blue-600/10 border-blue-500/30 text-blue-400 shadow-inner' : 'bg-white/5 border-white/10 text-slate-500 hover:text-white'
+                                }`}>
+                                <SlidersHorizontal className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                                <span>Filters</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                {/* Screening Stats Panel */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/5">
-                    <div className="space-y-1">
-                        <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Matched</p>
-                        <p className="text-lg sm:text-xl font-black text-white">{stats.total}</p>
-                    </div>
-                    <div className="space-y-1">
-                        <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Buy Signals</p>
-                        <p className="text-lg sm:text-xl font-black text-buy">{stats.buys}</p>
-                    </div>
-                    <div className="space-y-1">
-                        <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Avg Conf.</p>
-                        <p className="text-lg sm:text-xl font-black text-blue-400">{stats.avgConf.toFixed(0)}%</p>
-                    </div>
-                    <div className="space-y-1">
-                        <p className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Avg R/R</p>
-                        <p className="text-lg sm:text-xl font-black text-hold">{stats.avgRR.toFixed(1)}x</p>
-                    </div>
+                {/* KPI Ribbon */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-8 mt-3 sm:mt-5 pt-3 sm:pt-5 border-t border-white/5">
+                    {[
+                        { l: 'Matching', v: stats.total, c: 'text-white', icon: BarChart2 },
+                        { l: 'High Conv.', v: stats.buys, c: 'text-buy', icon: TrendingUp },
+                        { l: 'Avg Conf.', v: `${stats.avgConf.toFixed(0)}%`, c: 'text-blue-400', icon: Zap },
+                        { l: 'Profit Factor', v: `${stats.avgRR.toFixed(1)}x`, c: 'text-hold', icon: Target },
+                    ].map(s => (
+                        <div key={s.l} className="flex items-center gap-3 sm:gap-4 group">
+                            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-white/5 border border-white/5 flex items-center justify-center transition-transform shrink-0">
+                                <s.icon className={`w-3.5 sm:w-4 h-3.5 sm:h-4 ${s.c}`} />
+                            </div>
+                            <div className="space-y-0.5 min-w-0">
+                                <p className="text-[8px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest truncate">{s.l}</p>
+                                <p className={`text-xs sm:text-xl font-black tabular-nums ${s.c}`}>{s.v}</p>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
 
-            {/* Main Workspace */}
-            <div className="flex flex-col lg:flex-row gap-6 items-start">
-                {/* Sidebar Filters */}
+            {/* ── Main Layout Workspace ────────────────────────────────────── */}
+            <div className="flex flex-col lg:flex-row gap-5 sm:gap-10 items-start">
+                {/* Sidebar Param Filters */}
                 {showFilters && (
-                    <div className="w-full lg:w-80 shrink-0 lg:sticky lg:top-8 mb-6 lg:mb-0">
+                    <div className="w-full lg:w-72 shrink-0 lg:sticky lg:top-8 mb-6 lg:mb-0 animate-in slide-in-from-left-4 fade-in duration-500">
                         <FilterPanel 
                             filters={filters} 
                             setFilters={setFilters} 
@@ -338,54 +457,101 @@ export default function ScreenerPage({ onSelectStock }) {
                     </div>
                 )}
 
-                {/* Content Area */}
+                {/* Results Engine */}
                 <div className="flex-1 w-full min-w-0">
                     {filtered.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-20 sm:py-32 text-center rounded-3xl p-6" style={{ background: 'var(--color-glass)', border: '1px dashed var(--color-glass-border)' }}>
-                            <div className="p-4 sm:p-6 rounded-3xl bg-white/5 mb-4">
-                                <Search className="w-8 h-8 sm:w-12 sm:h-12 text-slate-700" />
+                        <div className="flex flex-col items-center justify-center py-24 sm:py-48 text-center rounded-lg sm:rounded-xl p-6" 
+                            style={{ background: 'rgba(8, 15, 26, 0.4)', border: '1px dashed rgba(255, 255, 255, 0.05)' }}>
+                            <div className="p-6 rounded-2xl bg-white/5 mb-4 ring-1 ring-white/10">
+                                <Search className="w-10 h-10 sm:w-16 sm:h-16 text-slate-800" />
                             </div>
-                            <h3 className="text-lg sm:text-xl font-black text-white mb-2">No Matches Found</h3>
-                            <p className="text-sm text-slate-500 max-w-xs mx-auto">Try loosening your filters or clearing the search.</p>
+                            <h3 className="text-lg sm:text-2xl font-black text-white mb-2">No Signals Found</h3>
+                            <p className="text-[10px] sm:text-base text-slate-500 max-w-xs mx-auto leading-relaxed">
+                                Try expanding your search or reducing the required confidence score.
+                            </p>
                         </div>
                     ) : view === 'heatmap' ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 2xl:grid-cols-8 gap-3 sm:gap-4 animate-in fade-in zoom-in duration-500">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2.5 sm:gap-5 animate-in fade-in zoom-in-95 duration-500">
                             {filtered.map(r => (
-                                <HeatmapBlock key={r.id} r={r} onClick={onSelectStock} />
+                                <HeatmapBlock key={r.id} r={r} onClick={handleSelect} />
                             ))}
                         </div>
                     ) : (
-                        <div className="rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500 transition-shadow duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]" style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
+                        <div className="rounded-lg sm:rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-700" 
+                            style={{ background: 'rgba(8, 15, 26, 0.5)', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(20px)' }}>
                             <div className="overflow-x-auto no-scrollbar">
-                                <table className="w-full text-left border-collapse min-w-[900px] sm:min-w-[1000px]">
-                                    <thead className="border-b border-white/5" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%)' }}>
-                                        <tr>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">#</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Symbol</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Signal</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Confidence</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">LTP</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Target</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Stop Loss</th>
-                                            <th className="px-4 py-5 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">R/R</th>
-                                            <th className="px-4 py-5"></th>
+                                <table className="w-full text-left border-collapse min-w-full">
+                                    <thead>
+                                        <tr className="border-b border-white/5" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, transparent 100%)' }}>
+                                            <th className="px-2 sm:px-5 py-4 sm:py-6 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">#</th>
+                                            <th className="px-2 sm:px-5 py-4 sm:py-6 group cursor-pointer hover:bg-white/5 transition-colors" onClick={() => handleSort('symbol')}>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Symbol</span>
+                                                    <SortIcon sort={sort} col="symbol" />
+                                                </div>
+                                            </th>
+                                            <th className="px-2 sm:px-5 py-4 sm:py-6 group cursor-pointer hover:bg-white/5 transition-colors" onClick={() => handleSort('prediction')}>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">Signal</span>
+                                                    <SortIcon sort={sort} col="prediction" />
+                                                </div>
+                                            </th>
+                                            <th className="px-3 sm:px-5 py-6 group cursor-pointer hover:bg-white/5 transition-colors hidden lg:table-cell" onClick={() => handleSort('confidence_score')}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Confidence</span>
+                                                    <SortIcon sort={sort} col="confidence_score" />
+                                                </div>
+                                            </th>
+                                            <th className="px-2 sm:px-5 py-4 sm:py-6 text-[9px] sm:text-[10px] font-black text-slate-500 uppercase tracking-widest">LTP</th>
+                                            <th className="px-3 sm:px-5 py-6 group cursor-pointer hover:bg-white/5 transition-colors hidden md:table-cell" onClick={() => handleSort('target_price')}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Target</span>
+                                                    <SortIcon sort={sort} col="target_price" />
+                                                </div>
+                                            </th>
+                                            <th className="px-3 sm:px-5 py-6 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] hidden xl:table-cell">Stop Loss</th>
+                                            <th className="px-3 sm:px-5 py-6 group cursor-pointer hover:bg-white/5 transition-colors hidden md:table-cell" onClick={() => handleSort('risk_reward')}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">R/R</span>
+                                                    <SortIcon sort={sort} col="risk_reward" />
+                                                </div>
+                                            </th>
+                                            <th className="px-2 sm:px-5 py-4 sm:py-6"></th>
                                         </tr>
                                     </thead>
-                                    <tbody>
+                                    <tbody className="divide-y divide-white/5">
                                         {filtered.map((r, i) => (
-                                            <TableRow key={r.id} r={r} rank={i + 1} onSelect={onSelectStock} />
+                                            <TableRow key={r.id} r={r} rank={i + 1} onSelect={handleSelect} />
                                         ))}
                                     </tbody>
                                 </table>
                             </div>
                             
-                            <div className="p-4 border-t border-white/5 bg-black/20 flex flex-col sm:flex-row items-center justify-between gap-2">
-                                <p className="text-[10px] sm:text-[11px] font-bold text-slate-500 text-center">
-                                    Displaying <span className="text-white">{filtered.length}</span> assets
-                                </p>
-                                <p className="text-[10px] sm:text-[11px] font-bold text-blue-400 uppercase tracking-widest animate-pulse text-center">
-                                    Click any row for deep AI analysis
-                                </p>
+                            {/* Pro Bottom Navigation */}
+                            <div className="px-3 sm:px-8 py-3 sm:py-6 border-t border-white/10 bg-black/40 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-6">
+                                <div className="flex items-center gap-2 sm:gap-4">
+                                    <div className="flex -space-x-1 sm:-space-x-2">
+                                        {filtered.slice(0, 3).map((r, i) => (
+                                            <div key={i} className="w-5 h-5 sm:w-8 sm:h-8 rounded-full border border-[#050d1a] bg-blue-600 flex items-center justify-center text-[6px] sm:text-[8px] font-black text-white ring-1 ring-white/10">
+                                                {(r.stocks?.symbol || r.symbol || '?')[0]}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[9px] sm:text-xs font-bold text-slate-400">
+                                        <span className="text-white">{filtered.length}</span> institutional signals
+                                    </p>
+                                </div>
+                                <div className="flex items-center gap-2 sm:gap-3">
+                                    <div className="flex items-center gap-1.5 px-2 sm:px-4 py-1 sm:py-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                                        <Info className="w-2.5 sm:w-3.5 h-2.5 sm:h-3.5 text-blue-400" />
+                                        <p className="text-[8px] sm:text-[10px] font-black text-blue-400 uppercase tracking-widest">
+                                            Scan Active
+                                        </p>
+                                    </div>
+                                    <p className="text-[8px] sm:text-[11px] font-black text-slate-500 uppercase tracking-widest">
+                                        {filtered.length} / {records.length}
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     )}

@@ -217,10 +217,27 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Dist_Support']    = (df['Close'] - df['Support'])    / df['Close'].replace(0, np.nan)
     df['Dist_Resistance'] = (df['Resistance'] - df['Close']) / df['Close'].replace(0, np.nan)
 
-    # ── Fill warmup NaN without look-ahead bias ───────────────────────────
+    # ── Institutional Signals ──────────────────────────────────────────────
+    
+    # Golden Cross (MA50 crosses above MA200)
+    df['Golden_Cross'] = ((df['MA_50'] > df['MA_200']) & (df['MA_50'].shift(1) <= df['MA_200'].shift(1))).astype(int)
+    # Death Cross (MA50 crosses below MA200)
+    df['Death_Cross']  = ((df['MA_50'] < df['MA_200']) & (df['MA_50'].shift(1) >= df['MA_200'].shift(1))).astype(int)
+
+    # ── Clean up and Finalize ─────────────────────────────────────────────
+    
+    # Forward fill to handle any mid-day calculation gaps
     df.ffill(inplace=True)
+    
+    # Smart Data Cleaning:
+    # We drop the very first 20 rows because almost all indicators (RSI, EMA, BB) 
+    # need at least 14-20 rows to "warm up" and provide accurate math.
+    if len(df) > 30:
+        df = df.iloc[20:].copy()
+    
+    # Any remaining NaNs (from extremely long MAs like 200) are filled with 0 
+    # to keep the AI model from crashing.
     df.fillna(0, inplace=True)
-    df.dropna(subset=['Close'], inplace=True)
     df.reset_index(drop=True, inplace=True)
 
     # ── Hard scalar enforcement ────────────────────────────────────────────

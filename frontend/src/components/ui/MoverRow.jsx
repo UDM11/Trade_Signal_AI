@@ -26,10 +26,12 @@ export default function MoverRow({ stock, isGainer, rank, mode, onNavigate }) {
                 {rank}
             </span>
             <div className="flex-1 min-w-0">
-                <p className="text-xs font-black text-white truncate transition-colors" style={{ '--tw-group-hover-color': cc, color: 'inherit' }}>
-                    <span className="group-hover:!text-[var(--tw-group-hover-color)]">{stock.symbol}</span>
-                </p>
-                <p className="text-[10px] tabular-nums text-text-muted">Rs. {fmt(stock.ltp)}</p>
+                <div className="flex items-center gap-2">
+                    <p className="text-[13px] sm:text-sm font-black text-white truncate transition-colors" style={{ '--tw-group-hover-color': cc, color: 'inherit' }}>
+                        <span className="group-hover:!text-[var(--tw-group-hover-color)]">{stock.symbol}</span>
+                    </p>
+                </div>
+                <p className="text-[11px] sm:text-xs tabular-nums text-text-muted/80">Rs. {fmt(stock.ltp)}</p>
             </div>
             <span className="text-sm font-black tabular-nums shrink-0 drop-shadow-sm transition-transform group-hover:scale-105" style={{ color: cc }}>
                 {isVolume   ? fmtVol(stock.volume)

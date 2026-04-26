@@ -27,7 +27,14 @@ export function relativeTime(dateStr) {
 
 // ── Mini sparkline ─────────────────────────────────────────────────────────────
 export function MiniSparkline({ chartData, signal }) {
-    if (!chartData?.length) return null;
+    const color = signal === 'BUY' ? '#22c55e' : signal === 'SELL' ? '#ef4444' : '#f59e0b';
+    if (!chartData?.length) {
+        return (
+            <svg width={80} height={32} viewBox="0 0 80 32" className="overflow-visible opacity-20">
+                <line x1="0" y1="16" x2="80" y2="16" stroke={color} strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" />
+            </svg>
+        );
+    }
     const pts = chartData.slice(-30).map(d => d.close).filter(Boolean);
     if (pts.length < 2) return null;
     const min = Math.min(...pts), max = Math.max(...pts);
@@ -36,7 +43,6 @@ export function MiniSparkline({ chartData, signal }) {
     const coords = pts.map((v, i) =>
         `${(i / (pts.length - 1)) * W},${H - ((v - min) / range) * (H - 4) - 2}`
     );
-    const color = signal === 'BUY' ? '#22c55e' : signal === 'SELL' ? '#ef4444' : '#f59e0b';
     return (
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
             <polyline
@@ -62,11 +68,11 @@ function StatCell({ icon: Icon, label, value, sub, valueClass = 'text-white' }) 
                     {label}
                 </span>
             </div>
-            <span className={`text-sm font-black truncate ${valueClass}`}>
+            <span className={`text-[13px] sm:text-sm font-black truncate ${valueClass}`}>
                 {value ?? '—'}
             </span>
             {sub && (
-                <span className={`text-[10px] font-bold ${
+                <span className={`text-[9px] sm:text-[10px] font-bold ${
                     sub.startsWith('+') ? 'text-buy'
                   : sub.startsWith('-') ? 'text-sell'
                   : 'text-slate-600'
@@ -102,7 +108,7 @@ export function HistoryCard({ record, onClick }) {
 
     return (
         <div
-            onClick={() => onClick(record)}
+            onClick={onClick}
             className="group relative flex flex-col cursor-pointer rounded-2xl overflow-hidden transition-all duration-300 hover:-translate-y-[2px]"
             style={{
                 background: 'rgba(255,255,255,0.02)',
@@ -136,39 +142,39 @@ export function HistoryCard({ record, onClick }) {
             />
 
             {/* Card body */}
-            <div className="pl-5 pr-4 pt-4 pb-3 flex flex-col gap-3">
+            <div className="pl-4 pr-3.5 pt-3.5 pb-2.5 flex flex-col gap-3">
 
                 {/* Row 1: Symbol + Time | Sparkline + Signal badge */}
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-between gap-2">
                     {/* Left: Symbol + timestamp */}
                     <div className="min-w-0">
                         <p
-                            className="text-lg font-black leading-tight truncate transition-all group-hover:!text-[var(--acc-color)] group-hover:translate-x-1"
+                            className="text-base sm:text-lg font-black leading-tight truncate transition-all group-hover:!text-[var(--acc-color)] group-hover:translate-x-1"
                             style={{ '--acc-color': sig.color, color: '#60a5fa' }}
                         >
                             {symbol}
                         </p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                            <Clock className="w-3 h-3 text-slate-600 shrink-0" />
-                            <span className="text-[11px] text-slate-500 font-medium">
+                        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 mt-0.5">
+                            <Clock className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-600 shrink-0" />
+                            <span className="text-[10px] sm:text-[11px] text-slate-500 font-medium">
                                 {relativeTime(record.created_at)}
                             </span>
                             {dateFormatted && (
                                 <>
-                                    <span className="text-slate-700">·</span>
-                                    <span className="text-[11px] text-slate-600">{dateFormatted}</span>
+                                    <span className="hidden xs:inline text-slate-700">·</span>
+                                    <span className="hidden xs:inline text-[10px] sm:text-[11px] text-slate-600">{dateFormatted}</span>
                                 </>
                             )}
                         </div>
                     </div>
 
                     {/* Right: Sparkline + Signal badge */}
-                    <div className="flex items-center gap-3 shrink-0">
-                        <div className="hidden sm:block opacity-70 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        <div className="hidden md:block opacity-70 group-hover:opacity-100 transition-opacity">
                             <MiniSparkline chartData={record.chart_data} signal={record.prediction} />
                         </div>
                         <div
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[10px] font-black tracking-[0.15em] transition-all group-hover:scale-105"
+                            className="flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border text-[8px] sm:text-[10px] font-black tracking-widest sm:tracking-[0.15em] transition-all group-hover:scale-105"
                             style={{
                                 background: `${sig.color}18`,
                                 borderColor: `${sig.color}50`,
@@ -176,14 +182,14 @@ export function HistoryCard({ record, onClick }) {
                                 boxShadow: `0 0 15px ${sig.color}22`
                             }}
                         >
-                            <SigIcon className="w-3 h-3" />
+                            <SigIcon className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                             {record.prediction}
                         </div>
                     </div>
                 </div>
 
                 {/* Row 2: Stats grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-4 gap-y-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-x-3 gap-y-2.5 sm:gap-x-4 sm:gap-y-3">
                     <StatCell
                         icon={Activity}
                         label="Latest Close"

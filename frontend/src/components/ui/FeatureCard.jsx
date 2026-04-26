@@ -45,23 +45,23 @@ export default function FeatureCard({ Icon, color, glow, border, title, desc, ba
             <div className="absolute inset-0 opacity-0 group-hover:opacity-50 transition-opacity duration-300 pointer-events-none"
                 style={{ background: `radial-gradient(ellipse at top left, ${glow} 0%, transparent 70%)` }} />
             
-            <div className="relative p-6 z-10">
-                <div className="flex items-start justify-between mb-4">
-                    <div className="p-3 rounded-xl transition-transform duration-300 group-hover:scale-110" 
+            <div className="relative p-4 sm:p-6 z-10">
+                <div className="flex items-start justify-between mb-2 sm:mb-4">
+                    <div className="p-2 sm:p-3 rounded-lg sm:rounded-xl transition-transform duration-300 group-hover:scale-110" 
                         style={{ background: glow || 'rgba(255,255,255,0.03)', border: `1px solid ${border || 'rgba(255,255,255,0.05)'}` }}>
-                        <Icon className="w-5 h-5 drop-shadow-md" style={{ color }} />
+                        <Icon className="w-4 h-4 sm:w-5 sm:h-5 drop-shadow-md" style={{ color }} />
                     </div>
                     {badge && (
-                        <span className="text-[10px] font-black px-2.5 py-1 rounded-lg tracking-wide uppercase shadow-sm"
+                        <span className="text-[8px] sm:text-[10px] font-black px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-md sm:rounded-lg tracking-wide uppercase shadow-sm"
                             style={{ background: `${color}18`, color: color, border: `1px solid ${color}40` }}>
                             {badge}
                         </span>
                     )}
                 </div>
-                <h3 className="text-lg font-black text-white mb-2 group-hover:text-primary transition-colors">{title}</h3>
-                <p className="text-xs leading-relaxed text-text-muted mb-6">{desc}</p>
-                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest transition-colors duration-300" style={{ color }}>
-                    Explore Feature <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1.5 transition-transform duration-300" />
+                <h3 className="text-base sm:text-lg font-black text-white mb-1 sm:mb-2 group-hover:text-primary transition-colors">{title}</h3>
+                <p className="text-[10px] sm:text-xs leading-relaxed text-text-muted mb-4 sm:mb-6">{desc}</p>
+                <div className="flex items-center gap-2 text-[9px] sm:text-[11px] font-black uppercase tracking-widest transition-colors duration-300" style={{ color }}>
+                    Explore Feature <ArrowRight className="w-3 sm:w-3.5 h-3 sm:h-3.5 group-hover:translate-x-1.5 transition-transform duration-300" />
                 </div>
             </div>
         </button>

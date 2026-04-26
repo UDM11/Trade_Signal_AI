@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { api } from '../api';
 
 const MarketContext = createContext({ marketData: null, connected: false });
 
@@ -6,19 +7,28 @@ export function MarketProvider({ children }) {
     const [marketData, setMarketData] = useState(null);
     const [connected, setConnected] = useState(false);
     const socketRef = useRef(null);
+    const seededRef = useRef(false);
 
     useEffect(() => {
+        // HTTP pre-seed: get market data immediately so pages render without waiting for socket
+        api.getNepseLive()
+            .then(res => {
+                if (res.data && !seededRef.current) {
+                    seededRef.current = true;
+                    setMarketData(res.data);
+                }
+            })
+            .catch(() => {});
+
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
         const wsUrl = `${protocol}//${host}/ws/market`;
 
         function connect() {
-            console.log('Connecting to Market WebSocket...');
             const ws = new WebSocket(wsUrl);
             socketRef.current = ws;
 
             ws.onopen = () => {
-                console.log('Market WebSocket connected');
                 setConnected(true);
             };
 
@@ -26,6 +36,7 @@ export function MarketProvider({ children }) {
                 try {
                     const message = JSON.parse(event.data);
                     if (message.type === 'MARKET_UPDATE') {
+                        seededRef.current = true;
                         setMarketData(message.data);
                     }
                 } catch (e) {
@@ -34,9 +45,7 @@ export function MarketProvider({ children }) {
             };
 
             ws.onclose = () => {
-                console.log('Market WebSocket disconnected');
                 setConnected(false);
-                // Simple reconnect logic after 3 seconds
                 setTimeout(connect, 3000);
             };
 

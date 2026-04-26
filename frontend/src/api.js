@@ -25,6 +25,15 @@ export const api = {
     runPredictions: async (symbols = null) => {
         return axios.post(`${API_BASE}/predictions/run`, symbols);
     },
+    getScanStatus: async () => {
+        return axios.get(`${API_BASE}/predictions/status`);
+    },
+    syncEOD: async () => {
+        return axios.get(`${API_BASE}/nepse/sync-eod`);
+    },
+    retrainAI: async () => {
+        return axios.post(`${API_BASE}/predictions/retrain`);
+    },
 
     // ── NEPSE Live Market ───────────────────────────────────────────────────
     getNepseLive: async () => {
@@ -36,10 +45,16 @@ export const api = {
     getNepseChart: async (symbol) => {
         return axios.get(`${API_BASE}/nepse/chart/${encodeURIComponent(symbol)}`);
     },
+    getNepseIntraday: async (symbol) => {
+        return axios.get(`${API_BASE}/nepse/intraday/${encodeURIComponent(symbol)}`);
+    },
     getNepseStatus: async () => {
         return axios.get(`${API_BASE}/nepse/status`);
     },
     getNepseQuote: async (symbol) => {
         return axios.get(`${API_BASE}/nepse/quote/${encodeURIComponent(symbol)}`);
+    },
+    analyzeStockDeep: async (symbol) => {
+        return axios.get(`${API_BASE}/nepse/analyze/${encodeURIComponent(symbol)}`);
     },
 };

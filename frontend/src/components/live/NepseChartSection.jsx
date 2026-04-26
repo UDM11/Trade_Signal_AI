@@ -64,7 +64,7 @@ export default function NepseChartSection({ data: intradayData = [], index, onSe
     };
 
     return (
-        <div className="rounded-2xl p-6 relative overflow-hidden group select-none transition-shadow duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]" 
+        <div className="rounded-xl sm:rounded-2xl p-3 sm:p-6 relative overflow-hidden group select-none transition-shadow duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)]" 
              style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)', touchAction: 'none' }}>
             
             {/* Top gradient accent line */}
@@ -72,38 +72,38 @@ export default function NepseChartSection({ data: intradayData = [], index, onSe
                  style={{ background: `linear-gradient(90deg, transparent, ${isUp ? '#22c55e' : '#ef4444'}, transparent)` }} />
             
             {/* Glossy Header */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 mb-4 sm:mb-8">
                 <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                        <h3 className="text-[10px] font-black text-text-muted uppercase tracking-[0.3em] flex items-center gap-2">
-                            <Activity className="w-3 h-3 text-blue-500" />
+                    <div className="flex items-center flex-wrap gap-2 sm:gap-3">
+                        <h3 className="text-[8px] sm:text-[10px] font-black text-text-muted uppercase tracking-[0.2em] sm:tracking-[0.3em] flex items-center gap-1.5 sm:gap-2">
+                            <Activity className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-500" />
                             NEPSE Index
-                            <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${isUp ? 'bg-bullish shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-bearish shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} />
+                            <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full animate-pulse ${isUp ? 'bg-bullish shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-bearish shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} />
                         </h3>
                         <button 
                             onClick={handleNavigate}
-                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 text-[9px] font-bold text-blue-400 transition-all uppercase tracking-wider group"
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/10 border border-white/5 text-[8px] font-bold text-blue-400 transition-all uppercase tracking-wider group"
                         >
-                            <Maximize2 className="w-2.5 h-2.5 group-hover:scale-110 transition-transform" />
-                            Full Chart
+                            <Maximize2 className="w-2 h-2 group-hover:scale-110 transition-transform" />
+                            Terminal
                         </button>
                     </div>
-                    <div className="flex items-baseline gap-3 mt-2">
-                        <span className="text-4xl font-black text-white tabular-nums tracking-tighter">
+                    <div className="flex items-baseline flex-wrap gap-2 sm:gap-3 mt-2 sm:mt-2">
+                        <span className="text-xl sm:text-4xl font-black text-white tabular-nums tracking-tighter">
                             {displayValue?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
-                        <div className={`flex items-center font-black text-sm px-2.5 py-1 rounded-xl ${isUp ? 'text-bullish bg-bullish/10' : 'text-bearish bg-bearish/10'}`}>
+                        <div className={`flex items-center font-black text-[9px] sm:text-sm px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg sm:rounded-xl ${isUp ? 'text-bullish bg-bullish/10' : 'text-bearish bg-bearish/10'}`}>
                             {isUp ? '▲' : '▼'} {Math.abs(displayChange).toFixed(2)} ({Math.abs(displayChgPct).toFixed(2)}%)
                         </div>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-1.5 bg-white/5 p-1 rounded-xl self-start border border-white/5 shadow-inner">
+                <div className="flex items-center gap-1 bg-white/5 p-0.5 sm:p-1 rounded-lg sm:rounded-xl self-start lg:self-center border border-white/5 shadow-inner">
                     {['1D', '1W', '1M', 'ALL'].map(t => (
                         <button 
                             key={t}
                             onClick={() => setTf(t)}
-                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all ${tf === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
+                            className={`px-2 sm:px-4 py-1 sm:py-2 rounded-md sm:rounded-lg text-[8px] sm:text-[10px] font-black transition-all ${tf === t ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30' : 'text-text-muted hover:text-white hover:bg-white/5'}`}
                         >
                             {t}
                         </button>
@@ -111,7 +111,7 @@ export default function NepseChartSection({ data: intradayData = [], index, onSe
                 </div>
             </div>
 
-            <div className="h-[300px] w-full">
+            <div className="h-[250px] sm:h-[300px] lg:h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={activeData}>
                         <defs>

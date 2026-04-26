@@ -495,10 +495,20 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
     if np.any(np.isnan(proba)):
         proba = np.ones(len(proba)) / len(proba)
 
+    # ── Confidence Thresholding (10/10 Improvement) ──────────────────────
+    # Only allow a BUY or SELL if the AI is truly confident (> 55%).
+    # Otherwise, default to HOLD to avoid "weak" signals.
+    CONFIDENCE_THRESHOLD = 55.0
     pred_enc_idx = int(np.argmax(proba))
     confidence   = round(float(proba[pred_enc_idx] * 100), 2)
     pred_class   = le.inverse_transform([pred_enc_idx])[0]
-    prediction   = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(pred_class, 'HOLD')
+    
+    raw_prediction = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(pred_class, 'HOLD')
+    
+    if raw_prediction in ['BUY', 'SELL'] and confidence < CONFIDENCE_THRESHOLD:
+        prediction = 'HOLD'
+    else:
+        prediction = raw_prediction
 
     all_proba = {'BUY': 0.0, 'HOLD': 0.0, 'SELL': 0.0}
     for i, cls in enumerate(le.classes_):
@@ -523,12 +533,13 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
 def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> dict:
     """
     Simulates trading on the held-out test set.
-    - NEPSE transaction costs: 0.4% per side (0.8% round-trip)
+    - NEPSE costs: 0.4% Broker Fee + Rs. 25 DP Fee (Institutional Standard)
     - Starting capital: Rs. 100,000
     - Reports: return %, win rate, max drawdown, Sharpe, Calmar, Profit Factor,
                total trades, commission paid.
     """
     COMMISSION = 0.004
+    DP_FEE     = 25.0    # Standard NEPSE DP Fee per transaction
     INITIAL    = 100_000.0
 
     if len(df) < 10:
@@ -564,7 +575,7 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
 
         if signal == 2 and shares == 0:          # BUY
             entry_capital     = capital           # record full capital before commission
-            cost              = capital * COMMISSION
+            cost              = (capital * COMMISSION) + DP_FEE
             total_commission += cost
             capital          -= cost
             shares            = capital / price
@@ -573,12 +584,10 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
 
         elif signal == 0 and shares > 0:         # SELL
             gross             = shares * price
-            cost              = gross * COMMISSION
+            cost              = (gross * COMMISSION) + DP_FEE
             total_commission += cost
             capital           = gross - cost
             # PnL = net sell proceeds minus original capital committed to buy.
-            # Using (shares * entry_price) was wrong: it excluded the buy-side
-            # commission, making every trade appear ~0.4% more profitable.
             pnl               = capital - entry_capital
             if pnl > 0:
                 gross_profit += pnl
@@ -599,7 +608,7 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
     # Liquidate remaining position at last price
     if shares > 0:
         gross             = shares * closes[-1]
-        cost              = gross * COMMISSION
+        cost              = (gross * COMMISSION) + DP_FEE
         total_commission += cost
         capital           = gross - cost
         pnl               = capital - entry_capital

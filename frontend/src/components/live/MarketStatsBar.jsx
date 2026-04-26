@@ -11,7 +11,7 @@ export default function MarketStatsBar({ summary }) {
     const flatPct = total ? Math.round((summary.unchanged / total) * 100) : 0;
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Turnover */}
             <StatCard 
                 title="Total Turnover" 
@@ -40,24 +40,21 @@ export default function MarketStatsBar({ summary }) {
             />
 
             {/* Market Breadth */}
-            <div className="rounded-2xl p-5 flex flex-col justify-between transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5"
+            <div className="rounded-xl sm:rounded-2xl p-3 sm:p-5 flex flex-col justify-between transition-all duration-300 hover:shadow-2xl hover:-translate-y-0.5"
                  style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-                <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">Market Breadth</span>
-                    <span className="text-[10px] font-bold text-text-muted">{total} stocks</span>
+                <div className="flex items-center justify-between mb-2 sm:mb-2">
+                    <span className="text-[8px] sm:text-[10px] font-black text-text-muted uppercase tracking-widest">Market Sentiment</span>
+                    <span className="text-[8px] sm:text-[10px] font-bold text-text-muted">{total} stocks</span>
                 </div>
                 
-                <div className="flex items-center gap-4">
-                    {/* Donut Chart (Simplified SVG) */}
-                    <div className="relative w-16 h-16 shrink-0">
-                        <svg className="w-full h-full transform -rotate-90">
-                            <circle
-                                cx="32" cy="32" r="28"
-                                stroke="currentColor"
-                                strokeWidth="6"
-                                fill="transparent"
-                                className="text-white/5"
-                            />
+                <div className="flex items-center gap-3 sm:gap-4">
+                    {/* Donut Chart (Multi-colored) */}
+                    <div className="relative w-12 h-12 sm:w-16 sm:h-16 shrink-0">
+                        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 64 64">
+                            {/* Background */}
+                            <circle cx="32" cy="32" r="28" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-white/5" />
+                            
+                            {/* Bearish (Red) */}
                             <circle
                                 cx="32" cy="32" r="28"
                                 stroke="currentColor"
@@ -66,44 +63,54 @@ export default function MarketStatsBar({ summary }) {
                                 strokeDasharray={176}
                                 strokeDashoffset={176 - (176 * downPct) / 100}
                                 className="text-bearish"
+                                style={{ transition: 'stroke-dashoffset 1s ease-out' }}
+                            />
+                            
+                            {/* Bullish (Green) - Layered */}
+                            <circle
+                                cx="32" cy="32" r="28"
+                                stroke="currentColor"
+                                strokeWidth="6"
+                                fill="transparent"
+                                strokeDasharray={176}
+                                strokeDashoffset={176 - (176 * upPct) / 100}
+                                strokeDasharray={`${(176 * upPct) / 100} ${176}`}
+                                transform="rotate(0 32 32)"
+                                className="text-bullish"
+                                style={{ transition: 'stroke-dashoffset 1s ease-out' }}
                             />
                         </svg>
                         <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-xs font-black text-white">{downPct}%</span>
+                            <div className="text-center">
+                                <span className="block text-[8px] sm:text-[10px] font-black text-white leading-none">{upPct}%</span>
+                                <span className="block text-[6px] sm:text-[7px] font-bold text-bullish uppercase">BULL</span>
+                            </div>
                         </div>
                     </div>
 
                     {/* Stats List */}
-                    <div className="flex-1 space-y-1.5">
+                    <div className="flex-1 space-y-1 sm:space-y-1.5">
                         <BreadthItem 
-                            label="Up" 
+                            label="Advances" 
                             count={summary.advancing} 
                             pct={upPct} 
                             color="text-bullish" 
                             bg="bg-bullish/10"
-                            icon={<ArrowUp className="w-2.5 h-2.5" />}
+                            icon={<ArrowUp className="w-2 sm:w-2.5 h-2 sm:h-2.5" />}
                         />
                         <BreadthItem 
-                            label="Flat" 
-                            count={summary.unchanged} 
-                            pct={flatPct} 
-                            color="text-text-muted" 
-                            bg="bg-white/5"
-                            icon={<Minus className="w-2.5 h-2.5" />}
-                        />
-                        <BreadthItem 
-                            label="Down" 
+                            label="Declines" 
                             count={summary.declining} 
                             pct={downPct} 
                             color="text-bearish" 
                             bg="bg-bearish/10"
-                            icon={<ArrowDown className="w-2.5 h-2.5" />}
+                            icon={<ArrowDown className="w-2 sm:w-2.5 h-2 sm:h-2.5" />}
                         />
                     </div>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="mt-4 flex h-1.5 w-full rounded-full overflow-hidden bg-white/5">
+                {/* Progress Bar (Combined) */}
+                <div className="mt-3 sm:mt-4 flex h-1 sm:h-1.5 w-full rounded-full overflow-hidden bg-white/5">
                     <div style={{ width: `${upPct}%` }} className="bg-bullish shadow-[0_0_10px_rgba(34,197,94,0.4)]" />
                     <div style={{ width: `${flatPct}%` }} className="bg-text-muted" />
                     <div style={{ width: `${downPct}%` }} className="bg-bearish shadow-[0_0_10px_rgba(239,68,68,0.4)]" />
@@ -123,24 +130,24 @@ function StatCard({ title, value, subtitle, icon, color }) {
     const accentLineColor = color === 'blue' ? '#3b82f6' : color === 'purple' ? '#8b5cf6' : '#f59e0b';
 
     return (
-        <div className="group relative rounded-2xl p-5 overflow-hidden transition-all duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)] hover:-translate-y-0.5"
+        <div className="group relative rounded-xl sm:rounded-2xl p-3 sm:p-5 overflow-hidden transition-all duration-300 hover:shadow-[0_8px_30px_rgba(0,0,0,0.3)] hover:-translate-y-0.5"
              style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
             
             {/* Top gradient accent line */}
             <div className="absolute top-0 left-0 right-0 h-[2px] opacity-60 transition-opacity duration-300 group-hover:opacity-100" 
                  style={{ background: `linear-gradient(90deg, transparent, ${accentLineColor}, transparent)` }} />
 
-            <div className="flex justify-between items-start mb-4 relative z-10">
-                <span className="text-[10px] font-black text-text-muted uppercase tracking-widest">{title}</span>
-                <div className="p-2 rounded-xl transition-transform duration-300 group-hover:scale-110 group-hover:shadow-lg"
+            <div className="flex justify-between items-start mb-2 sm:mb-4 relative z-10">
+                <span className="text-[8px] sm:text-[10px] font-black text-text-muted uppercase tracking-widest">{title}</span>
+                <div className="p-1 sm:p-2 rounded-lg sm:rounded-xl transition-transform duration-300 group-hover:scale-110 group-hover:shadow-lg"
                      style={{ background: glowColor, border: `1px solid ${borderColor}`, boxShadow: `0 0 10px ${glowColor}` }}>
                     {icon}
                 </div>
             </div>
             
-            <div className="space-y-1 relative z-10">
-                <div className="text-2xl font-black text-white tracking-tight">{value}</div>
-                <div className="text-[10px] font-bold text-text-muted uppercase tracking-wider">{subtitle}</div>
+            <div className="space-y-0.5 relative z-10">
+                <div className="text-sm sm:text-2xl font-black text-white tracking-tight">{value}</div>
+                <div className="text-[7px] sm:text-[10px] font-bold text-text-muted uppercase tracking-wider">{subtitle}</div>
             </div>
 
             {/* Radial background glow on hover */}

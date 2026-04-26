@@ -22,8 +22,43 @@
   --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
 }
 
+:root {
+  font-size: 17px; /* Globally increased from default 16px */
+}
+
 body {
     background-color: var(--color-background);
     color: var(--color-text);
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom Premium Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 20px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+  opacity: 0.8;
+}
+
+/* Base text scaling for premium feel */
+h1, h2, h3, h4, h5, h6 {
+    letter-spacing: -0.02em;
+}
+
+p {
+    line-height: 1.6;
 }

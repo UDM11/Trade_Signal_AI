@@ -25,6 +25,7 @@ _job_status: dict = {
     "last_finish":  None,
     "last_results": None,
     "running":      False,
+    "progress":     {"current": 0, "total": 0}
 }
 
 
@@ -115,8 +116,8 @@ async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> No
             if df is not None and not df.empty:
                 try:
                     ohlcv_batch = []
-                    # Only sync last 400 rows to save time/bandwidth (covers > 1 year)
-                    sync_df = df.tail(400) 
+                    # Sync more rows to support long-term history (up to ~10 years)
+                    sync_df = df.tail(2500) 
                     for _, row in sync_df.iterrows():
                         d_str = row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"])[:10]
                         ohlcv_batch.append({
@@ -161,13 +162,16 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
     from app.services.news_service import get_company_news
 
     try:
-        # 1. Fetch Data
+        # 1. Fetch Data (Prioritizes System/DB History + Merges latest NEPSE)
         chart = await get_stock_chart(symbol)
         if not chart or not chart.get("chart_data"):
             return "NO_DATA"
 
         df = _chart_to_df(chart["chart_data"])
-        if len(df) < 30:
+        history_days = len(df)
+        logger.info("[DEEP] Analyzing %s with %d days of historical data", symbol, history_days)
+        
+        if history_days < 30:
             return "INSUFFICIENT"
 
         # CPU-bound work → run in thread pool so the event loop stays free
@@ -258,11 +262,11 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
 
         await _save_to_db(symbol, payload, df=df)
         logger.info("[AUTO] %s → %s (%.1f%%)", symbol, prediction, confidence)
-        return prediction
+        return payload
 
     except Exception as e:
         logger.error("[AUTO] %s failed: %s", symbol, e)
-        return "ERROR"
+        return {"error": str(e), "signal": "ERROR"}
 
 
 # ── Main job ─────────────────────────────────────────────────────────────────
@@ -301,6 +305,7 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
                         symbols.append(sym)
 
         total   = len(symbols)
+        _job_status["progress"] = {"current": 0, "total": total}
         results: dict = {"BUY": 0, "SELL": 0, "HOLD": 0,
                          "ERROR": 0, "NO_DATA": 0, "INSUFFICIENT": 0}
 
@@ -321,7 +326,16 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
             logger.warning("No global model found! Falling back to ad-hoc per-symbol training (very slow).")
 
         for i, symbol in enumerate(symbols, 1):
-            signal = await _predict_one(symbol, global_artifacts)
+            _job_status["progress"]["current"] = i
+            res = await _predict_one(symbol, global_artifacts)
+            
+            if isinstance(res, dict):
+                signal = res.get("prediction", "ERROR")
+                if "error" in res and signal == "ERROR":
+                    signal = "ERROR" # explicitly mark as error
+            else:
+                signal = res # Fallback for any legacy code
+
             results[signal] = results.get(signal, 0) + 1
 
             # Brief pause every 10 stocks to avoid hammering the NEPSE API
@@ -387,7 +401,7 @@ async def run_daily_ohlcv_dump() -> None:
 
             # Fetch recent history (get_stock_chart already handles merging)
             chart = await get_stock_chart(sym)
-            history = chart.get("chart_data", [])[-7:] # Only need last 7 days for backup
+            history = chart.get("chart_data", [])[-15:] # Backfill last 15 days to cover inactivity
             
             payloads = []
             for h in history:
@@ -427,35 +441,52 @@ async def run_weekly_retraining() -> None:
     if _job_status["running"]:
         return
 
+    _job_status["running"] = True
+    _job_status["progress"] = {"current": 0, "total": 100}
     logger.info("=== Starting Weekly Global Model Retraining ===")
+    
     try:
         from app.services.nepse_service import get_live_data, get_stock_chart
         from app.indicators import add_indicators
         from app.model import tune_and_train_global_model
-        
         live = await get_live_data()
         stocks = live.get("stocks") or []
         if not stocks:
             stocks = live.get("top_turnovers", []) + live.get("top_volumes", [])
             
-        # Select top 50 stocks by volume/turnover for training the global model
-        # to ensure high liquidity data and keep training fast
-        stocks = sorted(stocks, key=lambda s: s.get("volume", 0), reverse=True)[:50]
+        # Select top 50 stocks by volume/turnover for training
+        # Deduplicate to avoid training bias if a stock is in both turnover and volume lists
+        seen = set()
+        deduped_stocks = []
+        for s in stocks:
+            sym = s.get("symbol")
+            if sym and sym not in seen:
+                seen.add(sym)
+                deduped_stocks.append(s)
+        
+        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:50]
         symbols = [s["symbol"] for s in stocks if s.get("symbol")]
+        
+        _job_status["running"] = True
+        _job_status["progress"]["total"] = 100
+        _job_status["progress"]["current"] = 0
         
         if not symbols:
             logger.error("No symbols found for weekly retraining.")
+            _job_status["running"] = False
             return
             
         dfs = []
-        for symbol in symbols:
+        total_syms = len(symbols)
+        for i, symbol in enumerate(symbols, 1):
+            _job_status["progress"]["current"] = 5 + int((i/total_syms) * 45)
             chart = await get_stock_chart(symbol)
             if chart and chart.get("chart_data"):
                 df = _chart_to_df(chart["chart_data"])
                 if len(df) >= 50:
                     df = add_indicators(df)
                     dfs.append(df)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.6)
             
         if not dfs:
             logger.error("Could not fetch valid chart data for global model.")
@@ -463,39 +494,46 @@ async def run_weekly_retraining() -> None:
             
         global_df = pd.concat(dfs, ignore_index=True)
         logger.info("Training global model on %d combined rows from %d stocks...", len(global_df), len(dfs))
+        _job_status["progress"]["current"] = 60
         
         metrics, _ = await asyncio.to_thread(tune_and_train_global_model, global_df)
+        _job_status["progress"]["current"] = 100
         logger.info("=== Weekly Retraining Complete: Acc: %.1f%% ===", metrics.get('accuracy', 0))
     except Exception as e:
         logger.error("Weekly retraining failed: %s", e)
+    finally:
+        _job_status["running"] = False
 
 
 def start_scheduler() -> None:
     """Register the daily job and start APScheduler. Called once from main.py."""
     # 15:15 NPT = 09:30 UTC  (NPT = UTC+5:45)
-    scheduler.add_job(
-        run_daily_predictions,
-        CronTrigger(hour=9, minute=30, day_of_week="mon-fri", timezone="UTC"),
-        id="daily_predictions",
-        replace_existing=True,
-        misfire_grace_time=600,   # 10-min grace window if server was briefly down
-    )
+    # Disabled as per user request to have full manual control
+    # scheduler.add_job(
+    #     run_daily_predictions,
+    #     CronTrigger(hour=9, minute=30, day_of_week="mon-fri", timezone="UTC"),
+    #     id="daily_predictions",
+    #     replace_existing=True,
+    #     misfire_grace_time=600,   # 10-min grace window if server was briefly down
+    # )
     
     # Weekly retraining at 10:00 NPT on Saturday (04:15 UTC)
-    scheduler.add_job(
-        run_weekly_retraining,
-        CronTrigger(hour=4, minute=15, day_of_week="sat", timezone="UTC"),
-        id="weekly_retraining",
-        replace_existing=True,
-    )
+    # Disabled as per user request to use the manual 'Deep Retrain' button instead
+    # scheduler.add_job(
+    #     run_weekly_retraining,
+    #     CronTrigger(hour=4, minute=15, day_of_week="sat", timezone="UTC"),
+    #     id="weekly_retraining",
+    #     replace_existing=True,
+    # )
     
     # Daily EOD Data Dump at 15:30 NPT (09:45 UTC)
-    scheduler.add_job(
-        run_daily_ohlcv_dump,
-        CronTrigger(hour=9, minute=45, day_of_week="mon-fri", timezone="UTC"),
-        id="daily_ohlcv_dump",
-        replace_existing=True,
-    )
+    # Disabled scheduled time as per user request to trigger on app open instead
+    # scheduler.add_job(
+    #     run_daily_ohlcv_dump,
+    #     CronTrigger(hour=9, minute=45, day_of_week="mon-fri", timezone="UTC"),
+    #     id="daily_ohlcv_dump",
+    #     replace_existing=True,
+    # )
     
     scheduler.start()
-    logger.info("APScheduler started — daily predictions at 15:15 NPT, EOD dump at 15:30 NPT, weekly retraining on Saturday")
+    logger.info("APScheduler started in MANUAL mode — use the dashboard buttons to trigger scans and retraining.")

@@ -14,8 +14,16 @@ _HEADERS = {
 }
 
 # Keywords for basic financial sentiment scoring
-POSITIVE_WORDS = {'dividend', 'bonus', 'profit', 'rise', 'growth', 'bullish', 'increase', 'award', 'bonus', 'right', 'merger'}
-NEGATIVE_WORDS = {'loss', 'drop', 'fall', 'bearish', 'decrease', 'fine', 'scam', 'low', 'decline', 'risky', 'penalty'}
+POSITIVE_WORDS = {
+    'dividend', 'bonus', 'profit', 'rise', 'growth', 'bullish', 'increase', 
+    'award', 'right', 'merger', 'acquisition', 'positive', 'expansion', 
+    'gain', 'bull', 'recovery', 'bounce', 'upgrade', 'outperform'
+}
+NEGATIVE_WORDS = {
+    'loss', 'drop', 'fall', 'bearish', 'decrease', 'fine', 'scam', 'low', 
+    'decline', 'risky', 'penalty', 'negative', 'crash', 'plunge', 'short', 
+    'down', 'weak', 'fraud', 'investigation', 'downgrade'
+}
 
 async def get_company_news(symbol: str) -> dict:
     """
@@ -67,8 +75,8 @@ async def _scrape_sharesansar(symbol: str) -> List[str]:
             resp = await client.get(url)
             if resp.status_code != 200: return []
             soup = BeautifulSoup(resp.text, 'html.parser')
-            # Look for news in the 'News & Events' tab
-            news_items = soup.select("#news h4 a")
+            # Look for news in the 'News & Events' tab (ID is cnews in newer layout)
+            news_items = soup.select("#cnews a")
             return [f"• {item.text.strip()}" for item in news_items[:3]]
     except: return []
 
