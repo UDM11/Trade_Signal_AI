@@ -11,6 +11,7 @@ import logging
 import math
 from datetime import datetime, timezone
 
+import httpx
 import pandas as pd
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -25,6 +26,7 @@ _job_status: dict = {
     "last_finish":  None,
     "last_results": None,
     "running":      False,
+    "job_type":     None,   # "scan" | "retrain"
     "progress":     {"current": 0, "total": 0}
 }
 
@@ -93,6 +95,16 @@ def _build_indicators_summary(latest) -> dict:
         "ADX_pos":       f(latest.get("ADX_pos"),       0),
         "ADX_neg":       f(latest.get("ADX_neg"),       0),
         "Range52W_Pct":  f(latest.get("Range52W_Pct"),  0.5, 4),
+        "Williams_R":    f(latest.get("Williams_R"),    -50),
+        "CMF":           f(latest.get("CMF"),           0, 4),
+        "ROC_3":         f(latest.get("ROC_3"),         0, 4),
+        "ROC_6":         f(latest.get("ROC_6"),         0, 4),
+        "Consec_Up":     int(latest.get("Consec_Up",    0) or 0),
+        "Consec_Down":   int(latest.get("Consec_Down",  0) or 0),
+        "RSI_Slope":     f(latest.get("RSI_Slope"),     0, 4),
+        "BB_Squeeze":    int(latest.get("BB_Squeeze",   0) or 0),
+        "VWAP_Ratio":    f(latest.get("VWAP_Ratio"),    1, 4),
+        "Volume_Surge":  int(latest.get("Volume_Surge", 0) or 0),
     }
 
 
@@ -186,13 +198,18 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
         prediction, confidence, backtest_stats, model_metrics, all_proba, all_signals = \
             await asyncio.to_thread(predict_latest, df, artifacts)
 
-        # 2. Fetch News for sentiment context (only for BUY signals to save costs/time)
-        news_text = ""
-        if prediction == "BUY":
-            try:
-                news_text = await get_company_news(symbol)
-            except:
-                news_text = ""
+        # 2. Fetch News Sentiment (V4 Upgrade: Sentiment is now a FEATURE, not just text)
+        news_data = {"sentiment_score": 0.0, "headlines": ""}
+        try:
+            news_data = await get_company_news(symbol)
+        except Exception: pass
+        
+        # Inject Sentiment into the dataframe for the model to "see"
+        df['Sentiment_Score'] = news_data.get("sentiment_score", 0.0)
+
+        # 3. Inject Global Market Breadth (Macro Context)
+        # We assume breadth was pre-calculated and available or we use a neutral fallback
+        df['Market_Breadth'] = getattr(asyncio.get_event_loop(), '_last_market_breadth', 1.0)
 
         if math.isnan(confidence) or math.isinf(confidence):
             confidence = 0.0
@@ -200,14 +217,13 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
         latest            = df.iloc[-1]
         indicators_summary = _build_indicators_summary(latest)
 
-        # generate_explanation has its own internal try/except fallback
-        # force_fallback=True for non-BUY signals to save OpenAI costs
+        # OpenAI only for BUY — SELL/HOLD use math fallback
         ai_result = await asyncio.to_thread(
-            generate_explanation, 
-            prediction, 
-            confidence, 
-            indicators_summary, 
-            news_text,
+            generate_explanation,
+            prediction,
+            confidence,
+            indicators_summary,
+            news_data, # Pass full dict now
             force_fallback=(prediction != "BUY")
         )
 
@@ -279,11 +295,7 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
     Returns a summary dict: {BUY, SELL, HOLD, ERROR, NO_DATA, INSUFFICIENT, elapsed_s}
     """
     global _job_status
-    if _job_status["running"]:
-        logger.warning("Prediction job already running — skipping duplicate trigger")
-        return {"error": "already_running"}
-
-    _job_status["running"] = True
+    # running=True and job_type already set by the API endpoint before task creation
     _job_status["last_run"] = datetime.now(timezone.utc).isoformat()
     started = datetime.now(timezone.utc)
 
@@ -310,6 +322,19 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
                          "ERROR": 0, "NO_DATA": 0, "INSUFFICIENT": 0}
 
         logger.info("=== Auto-prediction started: %d symbols ===", total)
+
+        # ── Macro Upgrade: Calculate Market Breadth (Adv/Dec Ratio) ──
+        try:
+            stocks_list = live.get("stocks") or []
+            advances = sum(1 for s in stocks_list if float(s.get("change") or 0) > 0)
+            declines = sum(1 for s in stocks_list if float(s.get("change") or 0) < 0)
+            # Breadth > 1.0 is Bullish Market, < 1.0 is Bearish Market
+            breadth = round(advances / max(1, declines), 2)
+            asyncio.get_event_loop()._last_market_breadth = breadth
+            logger.info("Market Breadth calculated: %.2f (Adv: %d, Dec: %d)", breadth, advances, declines)
+        except Exception as be:
+            asyncio.get_event_loop()._last_market_breadth = 1.0
+            logger.warning("Could not calculate market breadth: %s", be)
 
         from app.model import _get_latest_model_path
         import joblib
@@ -355,39 +380,235 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
         return results
 
     finally:
-        _job_status["running"] = False
+        _job_status["running"]  = False
+        _job_status["job_type"] = None
 
 
-async def run_daily_ohlcv_dump() -> None:
+async def _fetch_all_nepse_symbols_direct() -> list[str]:
     """
-    Fetches the last 7 days of OHLCV data for all stocks and dumps it into the
-    Supabase daily_ohlcv table. This acts as a self-healing backup that fills gaps.
-    Runs at 15:30 NPT (09:45 UTC).
+    Fetches ALL listed NEPSE stock symbols using direct HTTP — no nepse library dependency.
+    Sources (tried in order, results merged):
+      1. NEPSE today-price endpoint (returns all ~350 symbols always, even market-closed)
+      2. Supabase stocks table (previously known symbols as fallback)
+      3. In-memory live-data cache
     """
-    logger.info("=== Starting Daily EOD OHLCV Data Dump (with 7-day backfill) ===")
+    from app.services.supabase_client import get_supabase
+
+    seen: set  = set()
+    symbols: list = []
+
+    def _add(sym: str):
+        s = (sym or "").upper().strip()
+        if s and len(s) <= 15:
+            if s not in seen:
+                seen.add(s)
+                symbols.append(s)
+
+    # ── Source 1: NEPSE today-price endpoint (size=500 covers all ~350 stocks) ──
+    nepse_urls = [
+        "https://newweb.nepalstock.com/api/nots/nepse-data/today-price?&size=500&sort=true",
+        "https://newweb.nepalstock.com/api/nots/security/floorsheet?size=500",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Referer": "https://newweb.nepalstock.com/",
+    }
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        for url in nepse_urls:
+            try:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    items = data if isinstance(data, list) else (
+                        data.get("content") or data.get("data") or
+                        data.get("securities") or data.get("stocks") or []
+                    )
+                    before = len(symbols)
+                    for item in items:
+                        if isinstance(item, dict):
+                            sym = (item.get("symbol") or item.get("securityName") or
+                                   item.get("stockSymbol") or "")
+                            _add(sym)
+                    logger.info("NEPSE endpoint %s → +%d symbols", url.split("?")[0].split("/")[-1], len(symbols) - before)
+                    if len(symbols) > 100:
+                        break
+            except Exception as e:
+                logger.debug("NEPSE direct fetch failed (%s): %s", url, e)
+
+    # ── Source 2: Supabase stocks table ──────────────────────────────────────
     try:
-        from app.services.nepse_service import get_live_data, get_stock_chart
-        from app.services.supabase_client import get_supabase
-        
         supabase = get_supabase()
-        if not supabase: return
+        if supabase:
+            res = supabase.table("stocks").select("symbol").execute()
+            before = len(symbols)
+            for row in (res.data or []):
+                _add(row.get("symbol", ""))
+            logger.info("Supabase stocks table → +%d symbols", len(symbols) - before)
+    except Exception as e:
+        logger.warning("Supabase symbol fetch failed: %s", e)
 
-        live = await get_live_data()
-        stocks = live.get("stocks") or []
-        
-        # Explicitly ensure NEPSE index is included in the sync list
-        symbols = [s.get("symbol", "").upper() for s in stocks if s.get("symbol")]
-        if "NEPSE" not in symbols:
-            symbols.append("NEPSE")
+    # ── Source 3: in-memory live-data cache ──────────────────────────────────
+    try:
+        from app.services.nepse_service import _last_good_response
+        for s in _last_good_response.get("stocks", []):
+            _add(s.get("symbol", ""))
+    except Exception:
+        pass
 
-        # Get stock ID map
+    _add("NEPSE")
+    logger.info("Total symbols resolved: %d", len(symbols))
+    return symbols
+
+
+async def _fetch_stock_ohlcv_chukul(symbol: str, client: httpx.AsyncClient) -> list[dict]:
+    """Fetch 1 year of daily OHLCV for a stock from Chukul API."""
+    try:
+        url  = f"https://chukul.com/api/data/historydata/?symbol={symbol}"
+        resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        if resp.status_code != 200:
+            return []
+        rows = resp.json()
+        if not isinstance(rows, list):
+            return []
+        result = []
+        for r in rows:
+            date_val = r.get("date", "")
+            close    = float(r.get("close") or r.get("ltp") or 0)
+            if not date_val or close == 0:
+                continue
+            result.append({
+                "time":   date_val,
+                "open":   float(r.get("open")   or close),
+                "high":   float(r.get("high")   or close),
+                "low":    float(r.get("low")    or close),
+                "close":  close,
+                "volume": float(r.get("volume") or 0),
+            })
+        return result
+    except Exception as e:
+        logger.debug("[%s] Chukul fetch failed: %s", symbol, e)
+        return []
+
+
+async def run_daily_ohlcv_dump(manual: bool = False) -> dict:
+    """
+    Saves TODAY's OHLCV data for ALL active NEPSE stocks to Supabase daily_ohlcv.
+
+    Uses NEPSE today-price endpoint (single HTTP call → all ~350 stocks at once).
+    Falls back to Chukul most-recent row per stock if NEPSE endpoint fails.
+    Works whether market is open or closed.
+    """
+    global _job_status
+    label = "Today's OHLCV Sync" if manual else "Auto EOD OHLCV Dump"
+    logger.info("=== Starting %s ===", label)
+
+    if manual:
+        _job_status["last_run"]     = datetime.now(timezone.utc).isoformat()
+        _job_status["progress"]     = {"current": 0, "total": 1}
+
+    try:
+        from app.services.supabase_client import get_supabase
+        from app.services.nepse_service import _npt_now
+
+        supabase = get_supabase()
+        if not supabase:
+            return {"error": "Supabase not configured"}
+
+        # ── Step 1: Fetch today's OHLCV for all stocks in one call ──────────
+        # NEPSE today-price endpoint returns all ~350 stocks with today's data.
+        # Works even when market is closed (returns last trading day's data).
+        today_rows: list[dict] = []   # [{symbol, date, open, high, low, close, volume}]
+
+        NEPSE_URL = "https://newweb.nepalstock.com/api/nots/nepse-data/today-price?&size=500&sort=true"
+        HDR = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept":     "application/json",
+            "Referer":    "https://newweb.nepalstock.com/",
+        }
+
+        today_str = _npt_now().strftime("%Y-%m-%d")
+
+        async with httpx.AsyncClient(verify=False, timeout=30) as http:
+            # Primary: NEPSE today-price
+            try:
+                resp = await http.get(NEPSE_URL, headers=HDR)
+                if resp.status_code == 200:
+                    data  = resp.json()
+                    items = data if isinstance(data, list) else (
+                        data.get("content") or data.get("data") or
+                        data.get("securities") or data.get("stocks") or []
+                    )
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        sym = (item.get("symbol") or item.get("securityName") or "").upper().strip()
+                        if not sym:
+                            continue
+                        close = float(item.get("closePrice") or item.get("ltp") or
+                                      item.get("lastTradedPrice") or item.get("close") or 0)
+                        if close == 0:
+                            continue
+                        today_rows.append({
+                            "symbol": sym,
+                            "date":   item.get("businessDate", today_str)[:10] or today_str,
+                            "open":   float(item.get("openPrice")  or item.get("open")  or close),
+                            "high":   float(item.get("highPrice")  or item.get("high")  or close),
+                            "low":    float(item.get("lowPrice")   or item.get("low")   or close),
+                            "close":  close,
+                            "volume": float(item.get("totalTradeQuantity") or
+                                           item.get("totalTradedQuantity") or
+                                           item.get("volume") or 0),
+                        })
+                    logger.info("NEPSE today-price → %d stocks", len(today_rows))
+            except Exception as e:
+                logger.warning("NEPSE today-price failed: %s", e)
+
+            # Fallback: Chukul most-recent row per stock (if NEPSE endpoint gave nothing)
+            if not today_rows:
+                logger.info("Falling back to Chukul for today's data...")
+                symbols = await _fetch_all_nepse_symbols_direct()
+                if manual:
+                    _job_status["progress"] = {"current": 0, "total": len(symbols)}
+                for idx, sym in enumerate(symbols, 1):
+                    if manual:
+                        _job_status["progress"]["current"] = idx
+                    if sym == "NEPSE":
+                        continue
+                    rows = await _fetch_stock_ohlcv_chukul(sym, http)
+                    if rows:
+                        # Chukul returns newest first
+                        latest = rows[0]
+                        today_rows.append({
+                            "symbol": sym,
+                            "date":   latest["time"],
+                            "open":   latest["open"],
+                            "high":   latest["high"],
+                            "low":    latest["low"],
+                            "close":  latest["close"],
+                            "volume": latest["volume"],
+                        })
+                    await asyncio.sleep(0.3)
+
+        if not today_rows:
+            logger.warning("No today's data found from any source")
+            return {"error": "No data available", "total_stocks": 0, "rows_upserted": 0}
+
+        if manual:
+            _job_status["progress"] = {"current": 0, "total": len(today_rows)}
+
+        # ── Step 2: Resolve stock IDs and batch-upsert ───────────────────────
         db_stocks = supabase.table("stocks").select("id, symbol").execute()
-        stock_map = {s["symbol"].upper(): s["id"] for s in db_stocks.data}
+        stock_map: dict = {r["symbol"].upper(): r["id"] for r in (db_stocks.data or [])}
 
-        total_upserted = 0
-        for sym in symbols:
-            if not sym: continue
+        payloads   = []
+        errors     = 0
 
+        for idx, row in enumerate(today_rows, 1):
+            if manual:
+                _job_status["progress"]["current"] = idx
+
+            sym = row["symbol"]
             stock_id = stock_map.get(sym)
             if not stock_id:
                 try:
@@ -395,40 +616,56 @@ async def run_daily_ohlcv_dump() -> None:
                     if res.data:
                         stock_id = res.data[0]["id"]
                         stock_map[sym] = stock_id
-                except: continue
+                except Exception:
+                    errors += 1
+                    continue
+            if not stock_id:
+                continue
 
-            if not stock_id: continue
+            payloads.append({
+                "stock_id": stock_id,
+                "date":     row["date"],
+                "open":     row["open"],
+                "high":     row["high"],
+                "low":      row["low"],
+                "close":    row["close"],
+                "volume":   row["volume"],
+            })
 
-            # Fetch recent history (get_stock_chart already handles merging)
-            chart = await get_stock_chart(sym)
-            history = chart.get("chart_data", [])[-15:] # Backfill last 15 days to cover inactivity
-            
-            payloads = []
-            for h in history:
-                payloads.append({
-                    "stock_id": stock_id,
-                    "date": h["time"],
-                    "open": float(h.get("open", 0)),
-                    "high": float(h.get("high", 0)),
-                    "low": float(h.get("low", 0)),
-                    "close": float(h.get("close", 0)),
-                    "volume": float(h.get("value", 0)),
-                })
+        # Upsert in batches of 400
+        total_upserted = 0
+        BATCH = 400
+        for b in range(0, len(payloads), BATCH):
+            batch = payloads[b:b + BATCH]
+            try:
+                supabase.table("daily_ohlcv").upsert(batch, on_conflict="stock_id,date").execute()
+                total_upserted += len(batch)
+            except Exception as e:
+                logger.error("Batch upsert failed: %s", e)
+                errors += 1
 
-            if payloads:
-                try:
-                    supabase.table("daily_ohlcv").upsert(payloads, on_conflict="stock_id,date").execute()
-                    total_upserted += len(payloads)
-                except Exception as e:
-                    logger.error("Failed to upsert history for %s: %s", sym, e)
-            
-            # Throttle to avoid hitting rate limits or Supabase limits
-            await asyncio.sleep(0.2)
+        result = {
+            "total_stocks":  len(today_rows),
+            "rows_upserted": total_upserted,
+            "errors":        errors,
+            "date":          today_str,
+        }
+        logger.info("=== %s Complete: %d stocks / %d rows saved ===",
+                    label, len(today_rows), total_upserted)
 
-        logger.info("EOD Dump Complete: Upserted %d records for %d stocks.", total_upserted, len(stocks))
+        if manual:
+            _job_status["last_finish"]  = datetime.now(timezone.utc).isoformat()
+            _job_status["last_results"] = result
+
+        return result
 
     except Exception as e:
-        logger.error("Daily EOD OHLCV Dump failed: %s", e)
+        logger.error("%s failed: %s", label, e)
+        return {"error": str(e)}
+    finally:
+        if manual:
+            _job_status["running"]  = False
+            _job_status["job_type"] = None
 
 # ── Scheduler setup ──────────────────────────────────────────────────────────
 
@@ -438,17 +675,15 @@ async def run_weekly_retraining() -> None:
     hyperparameters, and saves a single global model.
     Runs every Saturday.
     """
-    if _job_status["running"]:
-        return
-
-    _job_status["running"] = True
-    _job_status["progress"] = {"current": 0, "total": 100}
+    # running=True and job_type already set by the API endpoint before task creation
+    _job_status["last_run"]  = datetime.now(timezone.utc).isoformat()
+    _job_status["progress"]  = {"current": 0, "total": 100}
     logger.info("=== Starting Weekly Global Model Retraining ===")
     
     try:
         from app.services.nepse_service import get_live_data, get_stock_chart
         from app.indicators import add_indicators
-        from app.model import tune_and_train_global_model
+        from app.model import tune_and_train_global_model, assign_labels
         live = await get_live_data()
         stocks = live.get("stocks") or []
         if not stocks:
@@ -484,8 +719,16 @@ async def run_weekly_retraining() -> None:
             if chart and chart.get("chart_data"):
                 df = _chart_to_df(chart["chart_data"])
                 if len(df) >= 50:
-                    df = add_indicators(df)
-                    dfs.append(df)
+                    # Bug fix 2: run CPU-bound work in thread pool — avoids blocking event loop
+                    df = await asyncio.to_thread(add_indicators, df)
+                    try:
+                        # Bug fix 1 & 4: label each stock individually BEFORE concat so
+                        # shift(-5) never bleeds across stock boundaries, and warmup rows
+                        # are dropped per-stock (add_indicators already removed first 20).
+                        df, _ = assign_labels(df)
+                        dfs.append(df)
+                    except Exception as label_err:
+                        logger.warning("[%s] labeling skipped: %s", symbol, label_err)
             await asyncio.sleep(0.6)
             
         if not dfs:
@@ -494,15 +737,33 @@ async def run_weekly_retraining() -> None:
             
         global_df = pd.concat(dfs, ignore_index=True)
         logger.info("Training global model on %d combined rows from %d stocks...", len(global_df), len(dfs))
-        _job_status["progress"]["current"] = 60
-        
-        metrics, _ = await asyncio.to_thread(tune_and_train_global_model, global_df)
+
+        # Data collection done (50%). Model training phase begins — ticks to 90 while thread runs.
+        _job_status["progress"]["current"] = 55
+        train_task = asyncio.to_thread(tune_and_train_global_model, global_df)
+
+        # Slowly inch progress while the blocking thread trains (cosmetic only)
+        async def _tick_progress():
+            for pct in range(60, 90, 5):
+                await asyncio.sleep(15)
+                if _job_status["progress"]["current"] < pct:
+                    _job_status["progress"]["current"] = pct
+
+        tick_task = asyncio.ensure_future(_tick_progress())
+        try:
+            metrics, _ = await train_task
+        finally:
+            tick_task.cancel()
+
         _job_status["progress"]["current"] = 100
+        _job_status["last_finish"]  = datetime.now(timezone.utc).isoformat()
+        _job_status["last_results"] = {"accuracy": metrics.get("accuracy", 0), "stocks_trained": len(dfs)}
         logger.info("=== Weekly Retraining Complete: Acc: %.1f%% ===", metrics.get('accuracy', 0))
     except Exception as e:
         logger.error("Weekly retraining failed: %s", e)
     finally:
-        _job_status["running"] = False
+        _job_status["running"]  = False
+        _job_status["job_type"] = None
 
 
 def start_scheduler() -> None:

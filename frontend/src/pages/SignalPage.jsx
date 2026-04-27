@@ -3,8 +3,48 @@ import {
     TrendingUp, TrendingDown, Minus, RefreshCw, Zap, X,
     Search, Activity, Target, BrainCircuit,
     LayoutGrid, List, ArrowUpRight,
-    Cpu, Shield, BarChart2, Filter
+    Cpu, Shield, BarChart2, Filter, AlertTriangle, Database
 } from 'lucide-react';
+
+// ── Retrain Confirmation Modal ────────────────────────────────────────────────
+function RetrainModal({ onConfirm, onCancel }) {
+    React.useEffect(() => {
+        document.body.style.overflow = 'hidden';
+        return () => { document.body.style.overflow = ''; };
+    }, []);
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+            <div className="relative w-full max-w-md rounded-2xl border border-white/10 shadow-2xl p-6 space-y-5"
+                style={{ background: '#0a121e' }}>
+                <div className="flex items-start gap-4">
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 shrink-0">
+                        <AlertTriangle className="w-6 h-6 text-amber-400" />
+                    </div>
+                    <div>
+                        <h3 className="text-base font-black text-white">Deep Retrain AI Model?</h3>
+                        <p className="text-sm text-slate-400 mt-1 leading-relaxed">
+                            This rebuilds the AI brain from scratch using the top 50 NEPSE stocks.
+                            Takes <span className="text-white font-bold">~5–7 minutes</span>. After completion,
+                            run a <span className="text-blue-400 font-bold">Market Scan</span> to generate fresh signals.
+                        </p>
+                    </div>
+                </div>
+                <div className="flex gap-3 pt-1">
+                    <button onClick={onCancel}
+                        className="flex-1 py-2.5 rounded-xl border border-white/10 text-sm font-bold text-slate-400 hover:text-white hover:bg-white/5 transition-all">
+                        Cancel
+                    </button>
+                    <button onClick={onConfirm}
+                        className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-sm font-black text-white shadow-lg shadow-blue-600/20 transition-all active:scale-95">
+                        Start Retrain
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
 import { api } from '../api';
 import { getCached, fetchPredictions, isStale, invalidate } from '../cache/predictionsCache';
 import { useToast } from '../contexts/ToastContext';
@@ -152,6 +192,8 @@ export default function SignalPage() {
     const [viewMode, setViewMode] = useState('grid');
     const [selected, setSelected] = useState(null);
     const [scanProgress, setScanProgress] = useState({ current: 0, total: 0 });
+    const [showRetrainModal, setShowRetrainModal] = useState(false);
+    const currentJobType = React.useRef(null); // 'scan' | 'retrain' | 'ohlcv_dump'
 
     const fetchData = useCallback(async (isBg = false) => {
         if (!isBg && !getCached()) setLoading(true);
@@ -178,15 +220,22 @@ export default function SignalPage() {
             timer = setInterval(async () => {
                 try {
                     const res = await api.getScanStatus();
-                    const status = res.data; // Correctly access axios data
+                    const status = res.data;
                     if (status.progress) {
                         setScanProgress(status.progress);
                     }
                     if (!status.running) {
                         setRunning(false);
-                        invalidate();
-                        fetchData();
-                        addToast?.({ title: 'Scan Complete', message: 'Market analysis finished successfully.', type: 'success' });
+                        if (currentJobType.current === 'retrain') {
+                            addToast?.({ title: 'Retrain Complete', message: 'New AI model saved. Run a market scan to generate fresh signals with it.', type: 'success' });
+                        } else if (currentJobType.current === 'ohlcv_dump') {
+                            addToast?.({ title: 'Data Sync Complete', message: "Today's OHLCV data saved to Supabase for all stocks.", type: 'success' });
+                        } else {
+                            invalidate();
+                            fetchData();
+                            addToast?.({ title: 'Scan Complete', message: 'Market analysis finished successfully.', type: 'success' });
+                        }
+                        currentJobType.current = null;
                     }
                 } catch (err) {
                     console.error("Status check failed:", err);
@@ -198,6 +247,7 @@ export default function SignalPage() {
 
     const handleRun = async () => {
         if (running) return;
+        currentJobType.current = 'scan';
         setRunning(true);
         setScanProgress({ current: 0, total: 0 });
         try {
@@ -205,26 +255,49 @@ export default function SignalPage() {
             addToast?.({ title: 'Scan Initialized', message: 'Deep market analysis is starting...', type: 'info' });
         } catch {
             setRunning(false);
+            currentJobType.current = null;
             addToast?.({ title: 'Scan Failed', message: 'Could not connect to AI engine.', type: 'error' });
         }
     };
 
-    const handleRetrain = async () => {
+    const handleRetrain = () => {
         if (running) return;
-        if (!window.confirm("Deep Retraining takes ~15 minutes and rebuilds the AI brain. Continue?")) return;
+        setShowRetrainModal(true);
+    };
+
+    const confirmRetrain = async () => {
+        currentJobType.current = 'retrain';
         setRunning(true);
         setScanProgress({ current: 0, total: 0 });
         try {
             await api.retrainAI();
+            setShowRetrainModal(false);
             addToast?.({ title: 'Training Started', message: 'The AI is learning from fresh data...', type: 'info' });
         } catch {
             setRunning(false);
+            currentJobType.current = null;
+            setShowRetrainModal(false);
             addToast?.({ title: 'Training Failed', message: 'Could not start background training.', type: 'error' });
         }
     };
 
-    const progressPct = scanProgress.total > 0 
-        ? Math.round((scanProgress.current / scanProgress.total) * 100) 
+    const handleSyncOHLCV = async () => {
+        if (running) return;
+        currentJobType.current = 'ohlcv_dump';
+        setRunning(true);
+        setScanProgress({ current: 0, total: 0 });
+        try {
+            await api.syncOHLCV();
+            addToast?.({ title: 'Data Sync Started', message: 'Fetching OHLCV data for all stocks...', type: 'info' });
+        } catch {
+            setRunning(false);
+            currentJobType.current = null;
+            addToast?.({ title: 'Sync Failed', message: 'Could not start OHLCV data sync.', type: 'error' });
+        }
+    };
+
+    const progressPct = scanProgress.total > 0
+        ? Math.round((scanProgress.current / scanProgress.total) * 100)
         : 0;
 
     const filtered = useMemo(() => {
@@ -287,29 +360,51 @@ export default function SignalPage() {
                             </div>
 
                             <div className="flex gap-1.5 w-full sm:w-auto">
-                                <button onClick={handleRetrain} disabled={running} 
+                                <button onClick={handleSyncOHLCV} disabled={running}
+                                    title="Save full OHLCV history (up to 6 years) for all stocks to Supabase"
+                                    className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg border transition-all font-black text-[10px] sm:text-xs uppercase tracking-widest relative overflow-hidden ${
+                                        running && currentJobType.current === 'ohlcv_dump'
+                                            ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400'
+                                            : running
+                                            ? 'bg-white/5 border-white/10 text-slate-600'
+                                            : 'bg-white/5 border-white/10 text-emerald-400 hover:text-white hover:bg-white/10'
+                                    }`}>
+                                    {running && currentJobType.current === 'ohlcv_dump' && (
+                                        <div className="absolute bottom-0 left-0 h-1 bg-emerald-400/50 transition-all duration-500" style={{ width: `${progressPct}%` }} />
+                                    )}
+                                    <Database className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${running && currentJobType.current === 'ohlcv_dump' ? 'animate-pulse' : ''}`} />
+                                    <span className="hidden sm:inline">
+                                        {running && currentJobType.current === 'ohlcv_dump'
+                                            ? `${scanProgress.current}/${scanProgress.total}`
+                                            : 'Sync Data'}
+                                    </span>
+                                </button>
+
+                                <button onClick={handleRetrain} disabled={running}
                                     className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg border transition-all font-black text-[10px] sm:text-xs uppercase tracking-widest relative overflow-hidden ${
                                         running ? 'bg-white/5 border-white/10 text-slate-600' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10'
                                     }`}>
-                                    {running && (
+                                    {running && currentJobType.current === 'retrain' && (
                                         <div className="absolute bottom-0 left-0 h-1 bg-blue-400/30 transition-all duration-500" style={{ width: `${progressPct}%` }} />
                                     )}
                                     <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                                     <span>Deep Retrain</span>
                                 </button>
 
-                                <button onClick={handleRun} disabled={running} 
+                                <button onClick={handleRun} disabled={running}
                                     className={`flex-1 sm:flex-none flex flex-col items-center justify-center min-w-[120px] sm:min-w-[140px] py-1.5 sm:py-2 rounded-lg font-black text-[10px] sm:text-xs uppercase tracking-widest transition-all relative overflow-hidden ${
                                         running ? 'bg-blue-600/10 text-blue-400 border border-blue-500/30' : 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:bg-blue-500'
                                     }`}>
-                                    {running && (
+                                    {running && currentJobType.current === 'scan' && (
                                         <div className="absolute bottom-0 left-0 h-1 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,1)] transition-all duration-500" style={{ width: `${progressPct}%` }} />
                                     )}
                                     <div className="flex items-center gap-2">
-                                        <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${running ? 'animate-spin' : ''}`} />
-                                        <span>{running ? `${progressPct}%` : 'Run Scan'}</span>
+                                        <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${running && currentJobType.current === 'scan' ? 'animate-spin' : ''}`} />
+                                        <span>{running && currentJobType.current === 'scan' ? `${progressPct}%` : 'Run Scan'}</span>
                                     </div>
-                                    {running && <span className="text-[7px] sm:text-[8px] opacity-60 mt-0.5">{scanProgress.current}/{scanProgress.total}</span>}
+                                    {running && currentJobType.current === 'scan' && (
+                                        <span className="text-[7px] sm:text-[8px] opacity-60 mt-0.5">{scanProgress.current}/{scanProgress.total}</span>
+                                    )}
                                 </button>
                             </div>
                         </div>
@@ -405,6 +500,11 @@ export default function SignalPage() {
                     </div>
                 )}
             </div>
+
+            {/* Retrain Confirmation Modal */}
+            {showRetrainModal && (
+                <RetrainModal onConfirm={confirmRetrain} onCancel={() => setShowRetrainModal(false)} />
+            )}
 
             {/* Premium Terminal Modal */}
             {selected && (

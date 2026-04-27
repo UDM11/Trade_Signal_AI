@@ -364,6 +364,10 @@ async def trigger_predictions(symbols: list[str] | None = None):
     from app.services.scheduler import run_daily_predictions, _job_status
     if _job_status["running"]:
         return {"status": "already_running", "detail": "A scan is already in progress."}
+    # Fix race condition: mark running before creating the task so the first
+    # status poll (which may arrive before the coroutine starts) sees running=True.
+    _job_status["running"]  = True
+    _job_status["job_type"] = "scan"
     asyncio.create_task(run_daily_predictions(symbols))
     return {"status": "started", "detail": "Market scan started."}
 
@@ -409,9 +413,23 @@ async def manual_retrain():
     from app.services.scheduler import run_weekly_retraining, _job_status
     if _job_status["running"]:
         return {"error": "A task is already running"}
-    
+    _job_status["running"]  = True
+    _job_status["job_type"] = "retrain"
     asyncio.create_task(run_weekly_retraining())
     return {"status": "Retraining started in background"}
+
+
+@router.post("/predictions/ohlcv-dump")
+async def manual_ohlcv_dump():
+    """Manually trigger OHLCV data sync for all NEPSE stocks into Supabase."""
+    from app.services.scheduler import run_daily_ohlcv_dump, _job_status
+    if _job_status["running"]:
+        return {"error": "A task is already running. Please wait for it to finish."}
+    _job_status["running"]  = True
+    _job_status["job_type"] = "ohlcv_dump"
+    _job_status["progress"] = {"current": 0, "total": 0}
+    asyncio.create_task(run_daily_ohlcv_dump(manual=True))
+    return {"status": "OHLCV sync started in background"}
 
 
 # ── NEPSE Live Market Routes ───────────────────────────────────────────────────

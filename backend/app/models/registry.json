@@ -1,0 +1,78 @@
+{
+    "active_model": "model_xgb_20260427_135750.pkl",
+    "models": [
+        {
+            "filename": "model_xgb_20260427_135750.pkl",
+            "date": "2026-04-27T13:57:50.901623",
+            "accuracy": 49.57,
+            "metrics": {
+                "accuracy": 49.57,
+                "threshold_used": 43.276,
+                "tuned_params_xgb": {
+                    "n_estimators": 400,
+                    "max_depth": 3,
+                    "learning_rate": 0.01
+                },
+                "tuned_params_lgb": {
+                    "n_estimators": 400,
+                    "max_depth": 3,
+                    "learning_rate": 0.01
+                }
+            },
+            "status": "active"
+        },
+        {
+            "filename": "model_xgb_20260427_165452.pkl",
+            "date": "2026-04-27T16:54:53.475805",
+            "accuracy": 51.92,
+            "metrics": {
+                "accuracy": 51.92,
+                "f1_macro": 50.02,
+                "threshold_used": 75.402,
+                "features_used": 65,
+                "tuned_params_xgb": {
+                    "subsample": 0.9,
+                    "reg_lambda": 1.0,
+                    "reg_alpha": 0.1,
+                    "n_estimators": 500,
+                    "min_child_weight": 3,
+                    "max_depth": 5,
+                    "learning_rate": 0.01,
+                    "gamma": 0,
+                    "colsample_bytree": 0.7
+                },
+                "tuned_params_lgb": {
+                    "subsample": 0.9,
+                    "reg_lambda": 1.0,
+                    "reg_alpha": 0.1,
+                    "n_estimators": 500,
+                    "min_child_samples": 10,
+                    "max_depth": 5,
+                    "learning_rate": 0.01,
+                    "colsample_bytree": 0.7
+                },
+                "per_class": {
+                    "SELL": {
+                        "precision": 37.6,
+                        "recall": 78.3,
+                        "f1": 50.8,
+                        "support": 373
+                    },
+                    "HOLD": {
+                        "precision": 80.3,
+                        "recall": 44.2,
+                        "f1": 57.1,
+                        "support": 913
+                    },
+                    "BUY": {
+                        "precision": 41.8,
+                        "recall": 42.6,
+                        "f1": 42.2,
+                        "support": 305
+                    }
+                }
+            },
+            "status": "staging"
+        }
+    ]
+}

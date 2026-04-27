@@ -61,6 +61,24 @@ def _today_date() -> str:
     return _npt_now().strftime("%Y-%m-%d")
 
 
+def get_latest_trading_date() -> str:
+    """Returns the most recent trading date (today if open/after-close, else previous business day)."""
+    now = _npt_now()
+    t = now.time()
+    wd = now.weekday()
+    
+    # NEPSE Trading: Sun(6) to Thu(3). Fri(4) & Sat(5) are holidays.
+    # If today is a trading day and it's after market open (11:00 AM), today is the active session.
+    if wd in (6, 0, 1, 2, 3) and t >= dtime(11, 0):
+        return now.strftime("%Y-%m-%d")
+        
+    # Otherwise, go back day by day until we find a trading day.
+    check = now - timedelta(days=1)
+    while check.weekday() in (4, 5):
+        check -= timedelta(days=1)
+    return check.strftime("%Y-%m-%d")
+
+
 # ── AsyncNepse singleton + security-ID cache ─────────────────────────────────
 _nepse_instance = None
 _symbol_id_cache: dict = {}   # symbol → numeric security ID, built from pvh data
@@ -206,16 +224,13 @@ async def get_live_data() -> dict:
     today = _today_date()
     market_open = is_market_open()
 
-    # Only call getPriceVolumeHistory when market is open.
-    # When market is closed the endpoint errors for today — skip it to avoid
-    # noisy failures and unnecessary singleton resets.
-    async def _skip():
-        return []
-
-    pvh_coro = (
-        _safe(nepse.getPriceVolumeHistory(business_date=today), timeout=45)
-        if market_open else _skip()
-    )
+    # Fetch PVH if market is open OR if it's after market close (to get final day data).
+    # If it's early morning (before 11:00), fetch for the last trading session instead of today.
+    now_time = _npt_now().time()
+    effective_pvh_date = get_latest_trading_date()
+    
+    # Only skip if it's a holiday and we have no fallback date (unlikely)
+    pvh_coro = _safe(nepse.getPriceVolumeHistory(business_date=effective_pvh_date), timeout=45)
 
     (pvh_raw, live_raw, summary_raw,
      gainers_raw, losers_raw, index_raw, nepse_chart_raw) = await asyncio.gather(
@@ -228,13 +243,43 @@ async def get_live_data() -> dict:
         _safe(nepse.getDailyNepseIndexGraph(), timeout=30),
     )
 
-    # Only reset the singleton on pvh failure during market hours — outside
-    # market hours the call is skipped so no reset needed.
-    if market_open and isinstance(pvh_raw, Exception):
+    # Reset singleton on fatal failure
+    if isinstance(pvh_raw, Exception) and market_open:
         logger.warning("pvh failed during market hours — resetting AsyncNepse instance")
         _nepse_instance = None
 
-    pvh_list  = _to_list(pvh_raw)
+    pvh_list = _to_list(pvh_raw)
+    
+    # Internal helper for direct NEPSE API fetch
+    async def _direct_fetch(date_str):
+        try:
+            url = f"https://newweb.nepalstock.com/api/nots/nepse-data/today-price?&size=500&businessDate={date_str}"
+            async with httpx.AsyncClient(verify=False, timeout=15) as client:
+                resp = await client.get(url, headers={
+                    "User-Agent": "Mozilla/5.0", "Referer": "https://newweb.nepalstock.com/"
+                })
+                if resp.status_code == 200:
+                    return _to_list(resp.json())
+        except Exception:
+            pass
+        return []
+
+    # ── Fallback 1: Direct Today-Price Fetch (if primary failed) ────────
+    if not pvh_list:
+        pvh_list = await _direct_fetch(effective_pvh_date)
+        if pvh_list:
+            logger.info("pvh fallback (today) → %d rows", len(pvh_list))
+
+    # ── Fallback 2: Previous Trading Day (if today is holiday/empty) ───
+    if not pvh_list:
+        check = datetime.strptime(effective_pvh_date, "%Y-%m-%d") - timedelta(days=1)
+        while check.weekday() in (4, 5):
+            check -= timedelta(days=1)
+        prev_date = check.strftime("%Y-%m-%d")
+        pvh_list = await _direct_fetch(prev_date)
+        if pvh_list:
+            logger.info("pvh fallback (prev: %s) → %d rows", prev_date, len(pvh_list))
+
     live_list = _to_list(live_raw)
 
     logger.info("pvh → %d rows | live → %d rows | market_open=%s",
@@ -424,6 +469,25 @@ async def get_live_data() -> dict:
         "HOLIDAY" if market_open else get_market_status()
     )
 
+    # ── Gainers / Losers ──────────────────────────────────────────────────
+    gainers = _movers(gainers_raw)
+    losers  = _movers(losers_raw)
+    
+    # Fallback: Derive from stocks list if specific endpoints are empty
+    if not gainers and stocks:
+        gainers = sorted(
+            [s for s in stocks if s.get("change_pct", 0) > 0],
+            key=lambda s: s["change_pct"],
+            reverse=True
+        )[:10]
+        
+    if not losers and stocks:
+        losers = sorted(
+            [s for s in stocks if s.get("change_pct", 0) < 0],
+            key=lambda s: s["change_pct"],
+            reverse=False
+        )[:10]
+
     result = {
         "market_open":   actually_open,
         "market_status": effective_status,
@@ -431,8 +495,8 @@ async def get_live_data() -> dict:
         "index":         index,
         "summary":       summary,
         "stocks":        stocks,
-        "gainers":       _movers(gainers_raw),
-        "losers":        _movers(losers_raw),
+        "gainers":       gainers,
+        "losers":        losers,
         "top_turnovers": top_turnovers,
         "top_volumes":   top_volumes,
         "nepse_chart":   _to_list(nepse_chart_raw),

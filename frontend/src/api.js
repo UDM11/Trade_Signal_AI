@@ -34,6 +34,9 @@ export const api = {
     retrainAI: async () => {
         return axios.post(`${API_BASE}/predictions/retrain`);
     },
+    syncOHLCV: async () => {
+        return axios.post(`${API_BASE}/predictions/ohlcv-dump`);
+    },
 
     // ── NEPSE Live Market ───────────────────────────────────────────────────
     getNepseLive: async () => {

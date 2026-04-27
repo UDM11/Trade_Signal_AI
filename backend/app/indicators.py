@@ -9,13 +9,13 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     Computes a comprehensive set of technical indicators and engineered features.
     Expects df to have 'Close', 'High', 'Low', 'Open', 'Volume' columns (case-insensitive).
 
-    Indicator groups:
-      - Trend:     EMA9, EMA21, MA50, MA200, MACD, ADX
-      - Momentum:  RSI, Stochastic %K/%D, 5/10-day momentum
-      - Volatility: Bollinger Bands, ATR, 20-period rolling std
-      - Volume:    OBV, Volume Change
-      - Price action: Candle Body/Shadows, Support/Resistance, 52-week position
-      - Composite:  Close_Normalized, Above_MA50/200, MACD_Cross, RSI_Change
+     Indicator groups:
+       - Trend:     EMA9, EMA21, HMA14, MA50, MA200, MACD, ADX, Aroon
+       - Momentum:  RSI, Stochastic %K/%D, 5/10-day momentum, Efficiency Ratio
+       - Volatility: Bollinger Bands, ATR, Z-Score, Donchian Channels
+       - Volume:    OBV, MFI, Volume Change
+       - Price action: Candle Body/Shadows, Pivot Points, 52-week position
+       - Advanced:   Fisher Transform, RSI Divergence, Trend Acceleration
     """
     df = df.copy()
 
@@ -72,6 +72,19 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # EMA crossover: 1 = EMA9 > EMA21 (bullish), 0 = bearish
     df['EMA_Cross'] = (df['EMA_9'] > df['EMA_21']).astype(int)
 
+    # Hull Moving Average (HMA) — Less lag than EMA, very responsive
+    # Formula: WMA(2*WMA(n/2) - WMA(n), sqrt(n))
+    def _wma(series, window):
+        weights = np.arange(1, window + 1)
+        return series.rolling(window).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
+
+    hma_w = 14
+    half_w = hma_w // 2
+    sqrt_w = int(np.sqrt(hma_w))
+    _raw_hma = 2 * _wma(df['Close'], half_w) - _wma(df['Close'], hma_w)
+    df['HMA_14'] = _wma(_raw_hma, sqrt_w)
+    df['HMA_Trend'] = (df['Close'] > df['HMA_14'].fillna(df['Close'])).astype(int)
+
     # Moving Averages — min_periods=1: expanding window until full data available,
     # avoiding the 0-fill that made Above_MA200 trivially true for early rows.
     df['MA_50']  = df['Close'].rolling(window=ma50_w,  min_periods=1).mean()
@@ -93,6 +106,15 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         df['ADX']     = 25.0
         df['ADX_pos'] = 0.0
         df['ADX_neg'] = 0.0
+
+    # Aroon Indicator — detects trend age and strength
+    if has_high and has_low:
+        ar_w = 25
+        df['Aroon_Up'] = df['High'].rolling(window=ar_w + 1).apply(lambda x: float(np.argmax(x[::-1]) / ar_w * 100), raw=True)
+        df['Aroon_Dn'] = df['Low'].rolling(window=ar_w + 1).apply(lambda x: float(np.argmin(x[::-1]) / ar_w * 100), raw=True)
+        df['Aroon_Osc'] = df['Aroon_Up'] - df['Aroon_Dn']
+    else:
+        df['Aroon_Osc'] = 0.0
 
     # ── Momentum Indicators ────────────────────────────────────────────────
 
@@ -147,6 +169,19 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 20-period volatility (rolling std of daily returns)
     df['Volatility'] = df['Close'].pct_change().rolling(window=roll_w, min_periods=2).std()
 
+    # Z-Score — Statistical overextension (Mean Reversion)
+    # > 2.0 = Extremely Overbought, < -2.0 = Extremely Oversold
+    df['Z_Score'] = (df['Close'] - _bb_mean) / _bb_std.replace(0, np.nan)
+
+    # Donchian Channels — Breakout detection (Turtle Trading)
+    if has_high and has_low:
+        df['Donchian_High'] = df['High'].rolling(window=20).max()
+        df['Donchian_Low']  = df['Low'].rolling(window=20).min()
+        df['Donchian_Mid']  = (df['Donchian_High'] + df['Donchian_Low']) / 2
+        df['Donchian_Width'] = (df['Donchian_High'] - df['Donchian_Low']) / df['Close'].replace(0, np.nan)
+    else:
+        df['Donchian_Width'] = 0.0
+
     # ── Volume Indicators ──────────────────────────────────────────────────
 
     if has_volume:
@@ -160,10 +195,23 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
         # Volume vs its 20-period average (>1 means above-average volume)
         vol_ma = df['Volume'].rolling(window=roll_w, min_periods=1).mean()
         df['Volume_Ratio'] = df['Volume'] / vol_ma.replace(0, np.nan)
+        
+        # MFI - Money Flow Index (Volume-weighted RSI)
+        # Professional standard for detecting overbought/oversold with volume
+        if has_high and has_low:
+            typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+            money_flow = typical_price * df['Volume']
+            positive_flow = (money_flow.where(typical_price > typical_price.shift(1), 0)).rolling(14).sum()
+            negative_flow = (money_flow.where(typical_price < typical_price.shift(1), 0)).rolling(14).sum()
+            mfr = positive_flow / negative_flow.replace(0, np.nan)
+            df['MFI'] = 100 - (100 / (1 + mfr.fillna(0)))
+        else:
+            df['MFI'] = 50.0
     else:
-        df['OBV_Ratio']    = 1.0
+        df['OBV_Ratio']     = 1.0
         df['Volume_Change'] = 0.0
-        df['Volume_Ratio'] = 1.0
+        df['Volume_Ratio']  = 1.0
+        df['MFI']           = 50.0
 
     # ── Price Action Features ──────────────────────────────────────────────
 
@@ -218,11 +266,129 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['Dist_Resistance'] = (df['Resistance'] - df['Close']) / df['Close'].replace(0, np.nan)
 
     # ── Institutional Signals ──────────────────────────────────────────────
-    
+
     # Golden Cross (MA50 crosses above MA200)
     df['Golden_Cross'] = ((df['MA_50'] > df['MA_200']) & (df['MA_50'].shift(1) <= df['MA_200'].shift(1))).astype(int)
     # Death Cross (MA50 crosses below MA200)
     df['Death_Cross']  = ((df['MA_50'] < df['MA_200']) & (df['MA_50'].shift(1) >= df['MA_200'].shift(1))).astype(int)
+
+    # ── Advanced Features ──────────────────────────────────────────────────
+
+    # Williams %R — overbought/oversold (complements RSI + Stoch)
+    # Range: -100 to 0. Above -20 = overbought; below -80 = oversold.
+    if has_high and has_low:
+        hh = df['High'].rolling(window=stoch_w, min_periods=1).max()
+        ll = df['Low'].rolling(window=stoch_w,  min_periods=1).min()
+        hl_range = (hh - ll).replace(0, np.nan)
+        df['Williams_R'] = ((hh - df['Close']) / hl_range * -100).fillna(-50)
+    else:
+        df['Williams_R'] = -50.0
+
+    # CMF — Chaikin Money Flow: net institutional buying/selling pressure (20-period)
+    # Positive = accumulation (smart money buying); Negative = distribution
+    if has_high and has_low and has_volume:
+        mfm = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / \
+              (df['High'] - df['Low']).replace(0, np.nan)
+        mfv = mfm * df['Volume']
+        vol_sum = df['Volume'].rolling(window=roll_w, min_periods=1).sum().replace(0, np.nan)
+        df['CMF'] = mfv.rolling(window=roll_w, min_periods=1).sum() / vol_sum
+        df['CMF'] = df['CMF'].fillna(0)
+    else:
+        df['CMF'] = 0.0
+
+    # Rate of Change — short (3d) and medium (6d) momentum
+    df['ROC_3'] = df['Close'].pct_change(periods=3).replace([np.inf, -np.inf], 0).fillna(0)
+    df['ROC_6'] = df['Close'].pct_change(periods=6).replace([np.inf, -np.inf], 0).fillna(0)
+
+    # Kaufman Efficiency Ratio (ER) — Noise vs Trend
+    # 1.0 = Clean efficient trend; 0.0 = Noisy/Choppy sideways
+    change = (df['Close'] - df['Close'].shift(10)).abs()
+    volatility_sum = (df['Close'] - df['Close'].shift(1)).abs().rolling(window=10).sum()
+    df['Efficiency_Ratio'] = (change / volatility_sum.replace(0, np.nan)).fillna(0.5)
+
+    # Fisher Transform — Normalizes price action for machine learning
+    # Highlights price extremes and trend reversals with high precision
+    med = (df['High'] + df['Low']) / 2 if (has_high and has_low) else df['Close']
+    low_n  = med.rolling(window=10).min()
+    high_n = med.rolling(window=10).max()
+    value  = 0.33 * 2 * ((med - low_n) / (high_n - low_n).replace(0, np.nan) - 0.5) + 0.67 * 0.5 # Dummy init
+    # Simplified Fisher (avoiding complex recursive loop in pandas for speed)
+    df['Fisher'] = 0.5 * np.log((1 + value) / (1 - value).replace(0, np.nan)).fillna(0)
+
+    # Consecutive Up / Down days — measures trend persistence
+    # e.g., 3 consecutive up days → momentum continuation signal
+    daily_direction = np.sign(df['Close'].diff().fillna(0))
+    consec_up   = [0] * len(df)
+    consec_down = [0] * len(df)
+    for i in range(1, len(df)):
+        if daily_direction.iloc[i] > 0:
+            consec_up[i]   = consec_up[i-1] + 1
+            consec_down[i] = 0
+        elif daily_direction.iloc[i] < 0:
+            consec_down[i] = consec_down[i-1] + 1
+            consec_up[i]   = 0
+        else:
+            consec_up[i]   = consec_up[i-1]
+            consec_down[i] = consec_down[i-1]
+    df['Consec_Up']   = consec_up
+    df['Consec_Down'] = consec_down
+
+    # RSI Slope — momentum of momentum: is RSI accelerating or decelerating?
+    df['RSI_Slope'] = df['RSI'].diff(3).fillna(0)
+
+    # BB Squeeze — True when BB is tightest in the last 20 days (pre-breakout signal)
+    bb_width_min = df['BB_Width'].rolling(window=roll_w, min_periods=1).min()
+    df['BB_Squeeze'] = (df['BB_Width'] <= bb_width_min * 1.1).astype(int)
+
+    # Rolling VWAP ratio — price vs volume-weighted average price (20-period)
+    # > 1.0 = price above VWAP (bullish); < 1.0 = below VWAP (bearish)
+    if has_volume:
+        typical = (df['High'] + df['Low'] + df['Close']) / 3 if (has_high and has_low) else df['Close']
+        tpv = typical * df['Volume']
+        vwap = tpv.rolling(window=roll_w, min_periods=1).sum() / \
+               df['Volume'].rolling(window=roll_w, min_periods=1).sum().replace(0, np.nan)
+        df['VWAP_Ratio'] = (df['Close'] / vwap.replace(0, np.nan)).fillna(1.0)
+    else:
+        df['VWAP_Ratio'] = 1.0
+
+    # Volume surge — volume spike above 2× average (institutional activity)
+    if has_volume:
+        df['Volume_Surge'] = (df['Volume_Ratio'] > 2.0).astype(int)
+    else:
+        df['Volume_Surge'] = 0
+
+    # ── Professional Institutional Features ────────────────────────────────
+    
+    # 1. Seasonality (Professional quant models use time-cycles)
+    if 'Date' in df.columns:
+        dt = pd.to_datetime(df['Date'])
+        df['DayOfWeek'] = dt.dt.dayofweek / 6.0  # Normalized 0-1
+        df['Month']     = (dt.dt.month - 1) / 11.0 # Normalized 0-1
+    else:
+        df['DayOfWeek'] = 0.5
+        df['Month']     = 0.5
+
+    # 2. RSI Divergence Approximation
+    # Is price making a new high while RSI is not?
+    price_high_20 = df['Close'] >= df['Close'].rolling(20).max()
+    rsi_high_20   = df['RSI']   >= df['RSI'].rolling(20).max()
+    df['RSI_Bear_Div'] = (price_high_20 & ~rsi_high_20).astype(int)
+    
+    price_low_20 = df['Close'] <= df['Close'].rolling(20).min()
+    rsi_low_20   = df['RSI']   <= df['RSI'].rolling(20).min()
+    df['RSI_Bull_Div'] = (price_low_20 & ~rsi_low_20).astype(int)
+
+    # 3. Trend Acceleration (Curvature)
+    df['Trend_Accel'] = df['EMA_9'].diff().diff().fillna(0)
+
+    # 4. Keltner Channels (Better than BB in strong trends)
+    if has_high and has_low:
+        df['KC_Middle'] = EMAIndicator(close=df['Close'], window=20).ema_indicator()
+        df['KC_Upper']  = df['KC_Middle'] + (2 * df['ATR'])
+        df['KC_Lower']  = df['KC_Middle'] - (2 * df['ATR'])
+        df['KC_pct_K']  = (df['Close'] - df['KC_Lower']) / (df['KC_Upper'] - df['KC_Lower']).replace(0, np.nan)
+    else:
+        df['KC_pct_K']  = 0.5
 
     # ── Clean up and Finalize ─────────────────────────────────────────────
     
