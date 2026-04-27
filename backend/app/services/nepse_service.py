@@ -186,7 +186,8 @@ async def get_nepse_history() -> list:
 
     # 3. Layer with live/recent data from Chukul
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with httpx.AsyncClient(timeout=60.0, headers=headers) as client:
             resp = await client.get("https://chukul.com/api/data/historydata/?symbol=nepse")
             if resp.status_code == 200:
                 data = resp.json()
@@ -230,17 +231,17 @@ async def get_live_data() -> dict:
     effective_pvh_date = get_latest_trading_date()
     
     # Only skip if it's a holiday and we have no fallback date (unlikely)
-    pvh_coro = _safe(nepse.getPriceVolumeHistory(business_date=effective_pvh_date), timeout=45)
+    pvh_coro = _safe(nepse.getPriceVolumeHistory(business_date=effective_pvh_date), timeout=60)
 
     (pvh_raw, live_raw, summary_raw,
      gainers_raw, losers_raw, index_raw, nepse_chart_raw) = await asyncio.gather(
         pvh_coro,
-        _safe(nepse.getLiveMarket(),           timeout=30),
-        _safe(nepse.getSummary(),              timeout=30),
-        _safe(nepse.getTopGainers(),           timeout=30),
-        _safe(nepse.getTopLosers(),            timeout=30),
-        _safe(nepse.getNepseIndex(),           timeout=30),
-        _safe(nepse.getDailyNepseIndexGraph(), timeout=30),
+        _safe(nepse.getLiveMarket(),           timeout=60),
+        _safe(nepse.getSummary(),              timeout=60),
+        _safe(nepse.getTopGainers(),           timeout=60),
+        _safe(nepse.getTopLosers(),            timeout=60),
+        _safe(nepse.getNepseIndex(),           timeout=60),
+        _safe(nepse.getDailyNepseIndexGraph(), timeout=60),
     )
 
     # Reset singleton on fatal failure
@@ -734,12 +735,16 @@ async def get_stock_intraday(symbol: str) -> dict:
     url = f"https://nepsealpha.com/trading/chart/history?symbol={symbol}&resolution=1&from={start_time}&to={end_time}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://nepsealpha.com/trading-view"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://newweb.nepalstock.com/",
+        "Origin": "https://newweb.nepalstock.com",
     }
     
+    # Increase timeout for cloud deployments (NEPSE is slow/unstable)
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(headers=headers, verify=False, timeout=60.0) as client:
             resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 return {"error": f"Failed to fetch intraday for {symbol}", "chart_data": []}
