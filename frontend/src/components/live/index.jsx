@@ -153,9 +153,20 @@ export default function LiveMarket({ initialSymbol }) {
                                     />
                                 </div>
                                 <div className="flex items-center justify-between sm:justify-start gap-2 bg-white/5 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl border border-white/10">
-                                    <span className="text-[8px] sm:text-[10px] font-bold text-text-muted uppercase tracking-widest">
-                                        {data.lastUpdated}
-                                    </span>
+                                    <div className="flex flex-col items-end">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="relative flex h-1.5 w-1.5">
+                                                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${data.connected ? 'bg-green-400' : 'bg-red-400'} opacity-75`}></span>
+                                                <span className={`relative inline-flex rounded-full h-1.5 w-1.5 ${data.connected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                                            </span>
+                                            <span className="text-[7px] sm:text-[9px] font-black text-white uppercase tracking-tighter">
+                                                {data.connected ? 'System Live' : 'Reconnecting'}
+                                            </span>
+                                        </div>
+                                        <span className="text-[8px] sm:text-[10px] font-bold text-text-muted uppercase tracking-widest leading-none mt-0.5">
+                                            Last Sync: {data.lastUpdated}
+                                        </span>
+                                    </div>
                                     <CountdownRing refreshing={data.refreshing} />
                                 </div>
                             </div>

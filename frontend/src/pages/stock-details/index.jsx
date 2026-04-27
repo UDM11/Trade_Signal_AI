@@ -130,6 +130,49 @@ function ExecutionOverview({ result, sigColor }) {
                     </p>
                 </div>
             </div>
+            
+            {/* TRADER UPGRADE: AI Position Sizer & Confluence */}
+            <div className="space-y-3 pt-2 border-t border-white/5">
+                <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Market Confluence</p>
+                    <div className="flex gap-2">
+                        {result.ai_analysis?.weekly_confluence && (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                {result.ai_analysis.weekly_confluence}
+                            </span>
+                        )}
+                        {result.ai_analysis?.sector_alignment != null && (
+                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-wider border ${result.ai_analysis.sector_alignment >= 0 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20'}`}>
+                                {result.ai_analysis.sector_alignment >= 0 ? 'Sector Aligned' : 'Sector Divergent'}
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                <div className="rounded-2xl p-4 bg-gradient-to-br from-blue-600/10 to-purple-600/10 border border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                        <span className="text-[10px] font-black text-white uppercase tracking-widest">AI Position Sizer</span>
+                        <span className="text-[8px] font-bold text-slate-400">Risk 1% per trade</span>
+                    </div>
+                    <div className="flex items-end justify-between">
+                        <div>
+                            <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Recommended Qty</p>
+                            <p className="text-xl font-black text-white tabular-nums">
+                                {result.stop_loss && result.ideal_entry ? 
+                                    Math.floor(10000 / Math.abs(result.ideal_entry - result.stop_loss)) : '—'} 
+                                <span className="text-[10px] ml-1 text-slate-400 font-bold uppercase">Units</span>
+                            </p>
+                        </div>
+                        <div className="text-right">
+                            <p className="text-[8px] font-black text-slate-500 uppercase mb-1">Est. Capital</p>
+                            <p className="text-xs font-bold text-slate-300 tabular-nums">
+                                Rs.{fmt((result.stop_loss && result.ideal_entry ? 
+                                    Math.floor(10000 / Math.abs(result.ideal_entry - result.stop_loss)) * result.ideal_entry : 0), 0)}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
@@ -237,6 +280,8 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
         stopLossPct:   selected.stop_loss_pct,
         riskReward:    selected.risk_reward,
         estimatedDays: selected.estimated_days,
+        volumeProfile: selected.ai_analysis?.volume_profile || selected.volume_profile,
+        fibonacci:     selected.ai_analysis?.fibonacci || selected.fibonacci,
     };
 
     const backtestData = selected.backtest || selected.backtest_stats || null;

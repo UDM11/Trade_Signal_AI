@@ -260,6 +260,8 @@ const OVERLAYS = [
     { key: "bb",     label: "BB",     color: "#6366f1" },
     { key: "vwap",   label: "VWAP",   color: "#14b8a6" },
     { key: "ich",    label: "ICH",    color: "#22c55e" },
+    { key: "vp",     label: "VOL PROFILE", color: "#6366f1" },
+    { key: "fib",    label: "FIBONACCI", color: "#f59e0b" },
 ];
 const SUB_PANELS = [
     { key: "rsi",   label: "RSI",   color: "#22d3ee" },
@@ -285,6 +287,7 @@ export default function TradingChart({
     symbol, data, liveCandle, stockLtp, prediction, signalHistory, explanation, defaultChartType = "candle",
     targetPrice, stopLoss, estimatedDays, targetPct, stopLossPct, riskReward,
     idealEntry, entryZoneLow, entryZoneHigh, target2, target2Pct, trailingStop,
+    volumeProfile, fibonacci,
 }) {
     const containerRef = useRef();
     const mainRef   = useRef();
@@ -302,7 +305,7 @@ export default function TradingChart({
 
     const [tf,          setTf]          = useState("ALL");
     const [chartType,   setChartType]   = useState(defaultChartType);
-    const [overlay,     setOverlay]     = useState({ sma20: true, sma50: true, ema200: false, ema9: false, ema21: false, bb: false, vwap: false, ich: false });
+    const [overlay,     setOverlay]     = useState({ sma20: true, sma50: true, ema200: false, ema9: false, ema21: false, bb: false, vwap: false, ich: false, vp: false, fib: false });
     const [subInd,      setSubInd]      = useState("rsi");
     const [ohlcv,       setOhlcv]       = useState(null);
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -694,6 +697,43 @@ export default function TradingChart({
             mkLine(stopLoss, isSell ? "#26a69a" : "#ef5350", 2, 0, `🛑 SL  Rs.${Number(stopLoss).toFixed(2)}  (${slPct}%)`);
         }
         if (trailingStop)       mkLine(trailingStop, "#f59e0b",                         1, 2, `~ Trail  Rs.${Number(trailingStop).toFixed(2)}`);
+        
+        // ── Fibonacci Levels ───────────────────────────────────────────────────
+        if (overlay.fib && fibonacci?.levels) {
+            Object.entries(fibonacci.levels).forEach(([level, price]) => {
+                const color = level === "0.618" || level === "0.5" ? "#f59e0b" : "rgba(245,158,11,0.4)";
+                const width = level === "0.618" || level === "0.5" ? 1.5 : 1;
+                mkLine(price, color, width, 2, `Fib ${level}  Rs.${price.toFixed(2)}`, false);
+            });
+        }
+
+        // ── Volume Profile (Visible on Left) ───────────────────────────────────
+        if (overlay.vp && volumeProfile?.length) {
+            // We use the histogram on a separate left scale for VP
+            if (!S.current.vp) {
+                S.current.vp = mc.addSeries(HistogramSeries, {
+                    color: "rgba(99,102,241,0.25)",
+                    priceScaleId: "left",
+                });
+                mc.priceScale("left").applyOptions({
+                    visible: true,
+                    scaleMargins: { top: 0.1, bottom: 0.1 },
+                    borderColor: BORDER,
+                });
+            }
+            
+            // To show it horizontally, we'd need a custom plugin or mapping.
+            // Simplified: we show it as a vertical histogram for now, or use markers.
+            // Professional way: set it as a series of data points.
+            const maxVol = Math.max(...volumeProfile.map(v => v.volume));
+            S.current.vp.setData(volumeProfile.map((v, i) => ({
+                time: filtered[filtered.length - 1 - i]?.time ?? filtered[0].time, // Just to map to valid times
+                value: v.price,
+                color: "rgba(99,102,241,0.4)"
+            })));
+        } else if (S.current.vp) {
+            S.current.vp.setData([]);
+        }
 
         // ── Signal markers ─────────────────────────────────────────────────────
         if (markersP.current) { try { markersP.current.setMarkers([]); } catch (e) { void e; } }

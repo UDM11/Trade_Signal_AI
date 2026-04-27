@@ -94,7 +94,7 @@ def _build_indicators_summary(latest) -> dict:
         "ADX":           f(latest.get("ADX"),           0),
         "ADX_pos":       f(latest.get("ADX_pos"),       0),
         "ADX_neg":       f(latest.get("ADX_neg"),       0),
-        "Range52W_Pct":  f(latest.get("Range52W_Pct"),  0.5, 4),
+        "Range52W_Pct":  round(float(latest.get('Range52W_Pct', 0.5)), 4),
         "Williams_R":    f(latest.get("Williams_R"),    -50),
         "CMF":           f(latest.get("CMF"),           0, 4),
         "ROC_3":         f(latest.get("ROC_3"),         0, 4),
@@ -106,6 +106,99 @@ def _build_indicators_summary(latest) -> dict:
         "VWAP_Ratio":    f(latest.get("VWAP_Ratio"),    1, 4),
         "Volume_Surge":  int(latest.get("Volume_Surge", 0) or 0),
     }
+
+
+def calculate_volume_profile(df: pd.DataFrame, bins: int = 24) -> list:
+    """
+    Calculates Volume Profile (Volume at Price).
+    Divides the price range into 'bins' and sums volume for each.
+    """
+    if df.empty or len(df) < 5:
+        return []
+    
+    price_min = df['Low'].min()
+    price_max = df['High'].max()
+    
+    if price_max == price_min:
+        return []
+        
+    bin_size = (price_max - price_min) / bins
+    profiles = []
+    
+    for i in range(bins):
+        b_low  = price_min + (i * bin_size)
+        b_high = b_low + bin_size
+        
+        # Sum volume where price was within this bin
+        # We use a simple approximation: if Close is in bin, add Volume
+        mask = (df['Close'] >= b_low) & (df['Close'] < b_high)
+        vol  = df.loc[mask, 'Volume'].sum()
+        
+        profiles.append({
+            "price": round(b_low + (bin_size / 2), 2),
+            "volume": float(vol),
+            "low": round(b_low, 2),
+            "high": round(b_high, 2)
+        })
+        
+    return profiles
+
+
+def calculate_fibonacci(df: pd.DataFrame, lookback: int = 120) -> dict:
+    """
+    Calculates Fibonacci Retracement levels (0.236, 0.382, 0.5, 0.618, 0.786).
+    Uses the highest high and lowest low over the lookback period.
+    """
+    if df.empty or len(df) < 20:
+        return {}
+        
+    recent_df = df.tail(lookback)
+    high = recent_df['High'].max()
+    low  = recent_df['Low'].min()
+    diff = high - low
+    
+    if diff == 0:
+        return {}
+        
+    return {
+        "high": round(high, 2),
+        "low":  round(low, 2),
+        "levels": {
+            "0.236": round(high - (0.236 * diff), 2),
+            "0.382": round(high - (0.382 * diff), 2),
+            "0.5":   round(high - (0.5 * diff), 2),
+            "0.618": round(high - (0.618 * diff), 2),
+            "0.786": round(high - (0.786 * diff), 2),
+        }
+    }
+
+
+def resample_ohlcv(df: pd.DataFrame, freq: str = 'W') -> pd.DataFrame:
+    """
+    Resamples daily OHLCV data to a different frequency (e.g., 'W' for Weekly).
+    """
+    if df.empty: return df
+    
+    # Ensure index is datetime
+    df_res = df.copy()
+    if 'Date' in df_res.columns:
+        df_res['Date'] = pd.to_datetime(df_res['Date'])
+        df_res.set_index('Date', inplace=True)
+    
+    logic = {
+        'Open':  'first',
+        'High':  'max',
+        'Low':   'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }
+    
+    # Also include indicators if they exist
+    for col in df_res.columns:
+        if col not in logic:
+            logic[col] = 'last'
+            
+    return df_res.resample(freq).apply(logic).dropna()
 
 
 async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> None:
@@ -217,6 +310,33 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
         latest            = df.iloc[-1]
         indicators_summary = _build_indicators_summary(latest)
 
+        # ── TRADER UPGRADE: Multi-Timeframe Confluence ──
+        weekly_confluence = "Neutral"
+        try:
+            df_w = resample_ohlcv(df, freq='W')
+            if len(df_w) > 5:
+                w_latest = df_w.iloc[-1]
+                w_ema = w_latest.get('EMA_21', w_latest.get('EMA_20', 0))
+                w_close = w_latest.get('Close', 0)
+                if prediction == "BUY" and w_close > w_ema:
+                    weekly_confluence = "Bullish Alignment"
+                elif prediction == "SELL" and w_close < w_ema:
+                    weekly_confluence = "Bearish Alignment"
+        except Exception as e:
+            logger.warning("Weekly confluence check failed: %s", e)
+
+        # ── TRADER UPGRADE: Sector Alignment ──
+        sector_alignment = 0.0
+        try:
+            from app.services.nepse_service import _last_good_response
+            if _last_good_response and "index" in _last_good_response:
+                mkt_chg = _last_good_response.get("index", {}).get("change_pct", 0)
+                if (prediction == "BUY" and mkt_chg > 0) or (prediction == "SELL" and mkt_chg < 0):
+                    sector_alignment = 1.0
+                elif (prediction == "BUY" and mkt_chg < 0) or (prediction == "SELL" and mkt_chg > 0):
+                    sector_alignment = -1.0
+        except: pass
+
         # Generate deep explanation
         # If force_ai is True (from manual request), we generate text even for SELL/HOLD
         ai_result = await asyncio.to_thread(
@@ -291,6 +411,10 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
                 "exit_condition":    ai_result.get("exit_condition"),
                 "risk_note":         ai_result.get("risk_note"),
                 "market_structure":  ai_result.get("market_structure"),
+                "volume_profile":    calculate_volume_profile(df),
+                "fibonacci":         calculate_fibonacci(df),
+                "weekly_confluence": weekly_confluence,
+                "sector_alignment":  sector_alignment,
             },
             "chart_data":    chart_data,
             "signal_history": signal_history,

@@ -219,69 +219,84 @@ async def _safe(coro, timeout=30):
         return e
 
 
-async def get_live_data() -> dict:
-    global _last_good_response, _nepse_instance
+# ── Caching Logic for Faster Updates ──────────────────────────────────────────
+_market_cache: dict = {
+    "ticker":   {"ts": 0.0, "data": []},
+    "summary":  {"ts": 0.0, "data": {}},
+    "index":    {"ts": 0.0, "data": {}},
+    "movers_g": {"ts": 0.0, "data": []},
+    "movers_l": {"ts": 0.0, "data": []},
+    "graph":    {"ts": 0.0, "data": []},
+    "pvh":      {"ts": 0.0, "data": []},
+}
+
+async def get_live_data(force_refresh: bool = False) -> dict:
+    """
+    Optimized live data fetcher. 
+    Uses tiered caching to provide fast updates for prices (Ticker)
+    while fetching heavy data (Summary, Movers, PVH) less frequently.
+    """
+    global _last_good_response, _nepse_instance, _market_cache
     nepse = await _client()
-    today = _today_date()
+    now = _npt_now().timestamp()
     market_open = is_market_open()
 
-    # Fetch PVH if market is open OR if it's after market close (to get final day data).
-    # If it's early morning (before 11:00), fetch for the last trading session instead of today.
-    now_time = _npt_now().time()
-    effective_pvh_date = get_latest_trading_date()
+    # Define TTLs (Seconds)
+    TICKER_TTL  = 2.0   if market_open else 60.0
+    SUMMARY_TTL = 30.0  if market_open else 300.0
+    MOVERS_TTL  = 30.0  if market_open else 300.0
+    INDEX_TTL   = 10.0  if market_open else 60.0
+    PVH_TTL     = 120.0 if market_open else 3600.0
+
+    async def _fetch_if_expired(key, coro_func, ttl):
+        """Helper to fetch and cache data only if expired."""
+        if force_refresh or (now - _market_cache[key]["ts"] > ttl):
+            try:
+                # Call the function to get the coroutine ONLY when we need to fetch
+                coro = coro_func() 
+                res = await _safe(coro, timeout=30)
+                if not isinstance(res, Exception):
+                    _market_cache[key]["ts"] = now
+                    _market_cache[key]["data"] = res
+                    return res
+            except Exception as e:
+                logger.debug(f"Cache fetch failed for {key}: {e}")
+        return _market_cache[key]["data"]
+
+    # 1. Fetch components concurrently only if needed
+    # We pass lambdas to delay the creation of coroutines until needed
+    ticker_task = _fetch_if_expired("ticker", lambda: nepse.getLiveMarket(), TICKER_TTL)
     
-    # Only skip if it's a holiday and we have no fallback date (unlikely)
-    pvh_coro = _safe(nepse.getPriceVolumeHistory(business_date=effective_pvh_date), timeout=60)
-
-    (pvh_raw, live_raw, summary_raw,
-     gainers_raw, losers_raw, index_raw, nepse_chart_raw) = await asyncio.gather(
-        pvh_coro,
-        _safe(nepse.getLiveMarket(),           timeout=60),
-        _safe(nepse.getSummary(),              timeout=60),
-        _safe(nepse.getTopGainers(),           timeout=60),
-        _safe(nepse.getTopLosers(),            timeout=60),
-        _safe(nepse.getNepseIndex(),           timeout=60),
-        _safe(nepse.getDailyNepseIndexGraph(), timeout=60),
-    )
-
-    # Reset singleton on fatal failure
-    if isinstance(pvh_raw, Exception) and market_open:
-        logger.warning("pvh failed during market hours — resetting AsyncNepse instance")
-        _nepse_instance = None
+    tasks = [
+        ticker_task,
+        _fetch_if_expired("summary", lambda: nepse.getSummary(),              SUMMARY_TTL),
+        _fetch_if_expired("movers_g", lambda: nepse.getTopGainers(),           MOVERS_TTL),
+        _fetch_if_expired("movers_l", lambda: nepse.getTopLosers(),            MOVERS_TTL),
+        _fetch_if_expired("index",   lambda: nepse.getNepseIndex(),           INDEX_TTL),
+        _fetch_if_expired("graph",   lambda: nepse.getDailyNepseIndexGraph(), INDEX_TTL),
+    ]
+    
+    # Optional: PVH is very heavy, fetch even less frequently
+    if force_refresh or (now - _market_cache["pvh"]["ts"] > PVH_TTL):
+        tasks.append(_fetch_if_expired("pvh", lambda: nepse.getPriceVolumeHistory(business_date=get_latest_trading_date()), PVH_TTL))
+    
+    results = await asyncio.gather(*tasks)
+    
+    ticker_raw  = results[0]
+    summary_raw = results[1]
+    gainers_raw = results[2]
+    losers_raw  = results[3]
+    index_raw   = results[4]
+    graph_raw   = results[5]
+    pvh_raw     = results[6] if len(results) > 6 else _market_cache["pvh"]["data"]
 
     pvh_list = _to_list(pvh_raw)
-    
-    # Internal helper for direct NEPSE API fetch
-    async def _direct_fetch(date_str):
-        try:
-            url = f"https://newweb.nepalstock.com/api/nots/nepse-data/today-price?&size=500&businessDate={date_str}"
-            async with httpx.AsyncClient(verify=False, timeout=15) as client:
-                resp = await client.get(url, headers={
-                    "User-Agent": "Mozilla/5.0", "Referer": "https://newweb.nepalstock.com/"
-                })
-                if resp.status_code == 200:
-                    return _to_list(resp.json())
-        except Exception:
-            pass
-        return []
+    live_list = _to_list(ticker_raw)
 
-    # ── Fallback 1: Direct Today-Price Fetch (if primary failed) ────────
-    if not pvh_list:
-        pvh_list = await _direct_fetch(effective_pvh_date)
-        if pvh_list:
-            logger.info("pvh fallback (today) → %d rows", len(pvh_list))
-
-    # ── Fallback 2: Previous Trading Day (if today is holiday/empty) ───
-    if not pvh_list:
-        check = datetime.strptime(effective_pvh_date, "%Y-%m-%d") - timedelta(days=1)
-        while check.weekday() in (4, 5):
-            check -= timedelta(days=1)
-        prev_date = check.strftime("%Y-%m-%d")
-        pvh_list = await _direct_fetch(prev_date)
-        if pvh_list:
-            logger.info("pvh fallback (prev: %s) → %d rows", prev_date, len(pvh_list))
-
-    live_list = _to_list(live_raw)
+    # ── Fallback Logic ──────────────────────────────────────────────────
+    if not pvh_list and market_open:
+        # If PVH is empty but ticker has data, we can still show prices
+        pvh_list = [] # Already empty, will use live_list as source below
 
     logger.info("pvh → %d rows | live → %d rows | market_open=%s",
                 len(pvh_list), len(live_list), market_open)
@@ -353,6 +368,7 @@ async def get_live_data() -> dict:
                     "ltp": ltp,
                     "change": change,
                     "change_pct": change_pct,
+                    "sector": s.get("sectorName") or s.get("sector") or "Other",
 
                     # OHLCV — try every known field name variant (pvh and live field names)
                     "open":  _g(s, "openPrice",  "open",  "todayOpen",  "openingPrice"),
@@ -387,28 +403,58 @@ async def get_live_data() -> dict:
                 continue
         return out
 
-    # ── NEPSE Index ───────────────────────────────────────────────────────
+    # ── NEPSE Index & Sectors (Trader V5 Upgrade) ─────────────────────────────
     index: dict = {}
+    market_indices: list = []
+    sectors_map: dict = {}
     idx_list = _to_list(index_raw)
     
-    nepse_idx = {}
+    # 1. Categorize indices from API
     for i in idx_list:
-        if isinstance(i, dict) and str(i.get("index", "")).upper() == "NEPSE INDEX":
-            nepse_idx = i
-            break
-            
-    if not nepse_idx and idx_list and isinstance(idx_list[0], dict):
-        nepse_idx = idx_list[0]
+        if not isinstance(i, dict): continue
+        idx_name = str(i.get("index", i.get("indexName", ""))).upper()
         
-    if nepse_idx:
-        index = {
-            "value":      _g(nepse_idx, "currentValue", "index", "nepseIndex"),
-            "change":     _g(nepse_idx, "change", "pointChange"),
-            "change_pct": _g(nepse_idx, "perChange", "percentChange", "percentageChange"),
-            "open":       _g(nepse_idx, "openIndex", "open", "openingIndex"),
-            "high":       _g(nepse_idx, "highIndex", "high", "maxIndex"),
-            "low":        _g(nepse_idx, "lowIndex", "low", "minIndex"),
+        idx_data = {
+            "name":       idx_name.replace(" INDEX", "").replace(" SUB-INDEX", "").strip(),
+            "value":      _g(i, "currentValue", "index", "nepseIndex"),
+            "change":     _g(i, "change", "pointChange"),
+            "change_pct": _g(i, "perChange", "percentChange", "percentageChange"),
         }
+        
+        # Primary Index
+        if idx_name == "NEPSE INDEX":
+            index = idx_data
+        # Broad Market Indices (Float, Sensitive)
+        elif any(x in idx_name for x in ["FLOAT", "SENSITIVE"]):
+            market_indices.append(idx_data)
+        # Real Sectors (Banking, Hydro, etc.)
+        else:
+            sectors_map[idx_data["name"]] = idx_data
+
+    # 2. Fallback/Augment: Always check stocks to find missing sectors
+    if stocks:
+        temp_sectors = {}
+        for s in stocks:
+            sec = s.get("sector") or "Other"
+            if sec not in temp_sectors:
+                temp_sectors[sec] = {"sum": 0.0, "count": 0, "val": 0.0}
+            if s.get("change_pct") is not None:
+                temp_sectors[sec]["sum"] += s["change_pct"]
+                temp_sectors[sec]["count"] += 1
+                temp_sectors[sec]["val"] += s.get("ltp", 0)
+        
+        for name, data in temp_sectors.items():
+            if data["count"] > 0:
+                # If sector from stock data is NOT in sectors_map, or sectors_map is empty, add it
+                if name not in sectors_map:
+                    sectors_map[name] = {
+                        "name":       name,
+                        "value":      data["val"] / data["count"],
+                        "change":     0,
+                        "change_pct": data["sum"] / data["count"]
+                    }
+
+    sectors = list(sectors_map.values())
 
     # ── Market Summary ────────────────────────────────────────────────────
     s_dict = {}
@@ -442,9 +488,10 @@ async def get_live_data() -> dict:
         "total_turnover": _s(s_dict.get("totalTurnover")) or turnover_fallback,
         "total_volume":   _s(s_dict.get("totalQuantity"),     int) or vol_fallback,
         "total_trades":   _s(s_dict.get("totalTransactions"), int) or trades_fallback,
-        "advancing":      _s(s_dict.get("advancingIssues"),   int) or adv_fallback,
-        "declining":      _s(s_dict.get("decliningIssues"),   int) or dec_fallback,
+        "advancers":      _s(s_dict.get("advancingIssues"),   int) or adv_fallback,
+        "decliners":      _s(s_dict.get("decliningIssues"),   int) or dec_fallback,
         "unchanged":      _s(s_dict.get("neutralIssues"),     int) or unc_fallback,
+        "total_stocks":   len(stocks)
     }
 
     # ── Top Turnovers ─────────────────────────────────────────────────────
@@ -489,18 +536,38 @@ async def get_live_data() -> dict:
             reverse=False
         )[:10]
 
+    # ── Market Breadth / Sector Analysis (Trader V5 Upgrade) ──────────────
+    # NEPSE provides indices for each sector. We calculate the performance
+    # of each sector based on advancing/declining stocks within it.
+    # Note: For now, we use a symbol-to-sector mapping if available, 
+    # but the simplest way is to categorize by the index name.
+    sectors: dict = {}
+    idx_list = _to_list(index_raw)
+    for idx in idx_list:
+        if not isinstance(idx, dict): continue
+        name = str(idx.get("index", "")).upper()
+        if "INDEX" in name and name != "NEPSE INDEX":
+            sectors[name] = {
+                "name":       name.replace(" INDEX", "").strip(),
+                "value":      _g(idx, "currentValue", "index"),
+                "change":     _g(idx, "change", "pointChange"),
+                "change_pct": _g(idx, "perChange", "percentChange"),
+            }
+
     result = {
         "market_open":   actually_open,
         "market_status": effective_status,
         "timestamp":     _npt_now().isoformat(),
         "index":         index,
+        "market_indices": market_indices,
         "summary":       summary,
+        "sectors":       sectors,
         "stocks":        stocks,
         "gainers":       gainers,
         "losers":        losers,
         "top_turnovers": top_turnovers,
         "top_volumes":   top_volumes,
-        "nepse_chart":   _to_list(nepse_chart_raw),
+        "nepse_chart":   _to_list(graph_raw),
         "stale":         False,
     }
 
@@ -662,6 +729,35 @@ async def get_stock_chart(symbol: str) -> dict:
 
     except Exception as e:
         logger.warning("Iterative API chart fetch for %s failed: %s", symbol, e)
+
+    # 3.5 Write-Through Cache: Save new API data back to Supabase
+    if api_data:
+        try:
+            from app.services.supabase_client import get_supabase
+            supabase = get_supabase()
+            if supabase:
+                # Resolve stock ID
+                stock_res = supabase.table("stocks").select("id").eq("symbol", symbol).execute()
+                if stock_res.data:
+                    stock_id = stock_res.data[0]["id"]
+                    # Prepare batch for upsert
+                    sync_payload = []
+                    for d in api_data:
+                        sync_payload.append({
+                            "stock_id": stock_id,
+                            "date":     d["time"],
+                            "open":     d["open"],
+                            "high":     d["high"],
+                            "low":      d["low"],
+                            "close":    d["close"],
+                            "volume":   d["value"]
+                        })
+                    # Batch upsert (Supabase handles duplicates via on_conflict if constraint exists)
+                    if sync_payload:
+                        supabase.table("daily_ohlcv").upsert(sync_payload, on_conflict="stock_id,date").execute()
+                        logger.info("Write-Through Cache: Synced %d rows to Supabase for %s", len(sync_payload), symbol)
+        except Exception as se:
+            logger.debug("Write-Through Cache failed for %s (non-critical): %s", symbol, se)
 
     # 4. Merge Data (API data takes precedence for matching dates)
     if not db_data and not api_data:

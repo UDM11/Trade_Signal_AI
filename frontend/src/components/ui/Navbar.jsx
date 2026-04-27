@@ -22,6 +22,7 @@ const TABS = [
     { key: 'home',      label: 'Home',        Icon: Home              },
     { key: 'live',      label: 'Live Market', Icon: Radio             },
     { key: 'screener',  label: 'Screener',    Icon: SlidersHorizontal },
+    { key: 'sentiment', label: 'Sentiment',   Icon: BarChart2         },
     { key: 'dashboard', label: 'Signal AI',   Icon: Activity          },
     { key: 'history',   label: 'History',     Icon: History           },
 ];

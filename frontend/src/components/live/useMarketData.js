@@ -6,7 +6,17 @@ export function useMarketData() {
     const { marketData, connected } = useMarketSocket();
     const stocks = marketData?.stocks || [];
     const summary = marketData?.summary || {};
-    const lastUpdated = marketData?.last_updated || 'Just now';
+    
+    // Format timestamp from ISO string (2026-04-27T...) to HH:MM:SS
+    const lastUpdated = useMemo(() => {
+        if (!marketData?.timestamp) return 'Connecting...';
+        try {
+            const date = new Date(marketData.timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        } catch (e) {
+            return 'Just now';
+        }
+    }, [marketData?.timestamp]);
     const nepseChart = useMemo(() => {
         const raw = marketData?.nepse_chart || [];
         return raw.map(d => {
@@ -29,7 +39,9 @@ export function useMarketData() {
     const refresh = useCallback(async () => {
         setRefreshing(true);
         try {
-            await api.getMarketSummary(); // Trigger manual poll if socket is slow
+            await api.getNepseLive(); // Trigger manual poll if socket is slow
+        } catch (e) {
+            console.error("Refresh failed", e);
         } finally {
             setTimeout(() => setRefreshing(false), 800);
         }

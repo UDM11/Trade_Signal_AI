@@ -83,8 +83,8 @@ async def market_broadcast_task():
                         "data": live_data
                     })
             
-            # Broadcast every 5 seconds if market open, otherwise every 60 seconds
-            sleep_time = 5 if is_market_open() else 60
+            # Broadcast every 2 seconds if market open (Turbo Mode), otherwise every 60 seconds
+            sleep_time = 2 if is_market_open() else 60
             await asyncio.sleep(sleep_time)
             
         except asyncio.CancelledError:

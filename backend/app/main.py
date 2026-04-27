@@ -14,19 +14,32 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 load_dotenv()
 
-app = FastAPI(title="Trade Signal AI API")
+from contextlib import asynccontextmanager
+from app.services.scheduler import scheduler
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    broadcast_task = asyncio.create_task(market_broadcast_task())
+    yield
+    # Shutdown logic
+    broadcast_task.cancel()
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+
+app = FastAPI(title="Trade Signal AI API", lifespan=lifespan)
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -35,10 +48,11 @@ app.include_router(router, prefix="/api")
 
 @app.websocket("/ws/market")
 async def websocket_market(websocket: WebSocket):
+    # For WebSockets, we manually check origin if needed, or rely on middleware if supported
+    # But usually, simply connecting is fine if CORS is permissive enough
     await manager.connect(websocket)
     try:
         while True:
-            # Keep connection alive; client just waits for broadcasts
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
@@ -49,20 +63,6 @@ async def websocket_market(websocket: WebSocket):
 @app.get("/api/health")
 def health():
     return {"status": "ok", "message": "Trade Signal AI is running."}
-
-
-# ── Scheduler lifecycle (Disabled as per user request for manual-only scans) ───────────────────
-from app.services.scheduler import scheduler
-
-@app.on_event("startup")
-async def _startup():
-    # start_scheduler() # Disabled automatic daily scan
-    asyncio.create_task(market_broadcast_task())
-
-@app.on_event("shutdown")
-async def _shutdown():
-    if scheduler.running:
-        scheduler.shutdown(wait=False)
 
 
 # Serve the built React frontend for every non-API route.

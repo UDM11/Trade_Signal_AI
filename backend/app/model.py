@@ -511,23 +511,22 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
     )
     ensemble.fit(X_train_sc, y_train_enc, sample_weight=sw_train)
 
-    # ── Feature importance filtering ──────────────────────────────────────
-    # XGBoost gives reliable per-feature importances. Drop features with near-zero
-    # contribution (< 0.3% of total) to reduce noise and improve generalization.
-    xgb_imp = best_xgb.feature_importances_
-    total_imp = xgb_imp.sum()
-    if total_imp > 0:
-        imp_ratios = xgb_imp / total_imp
-        selected_mask  = imp_ratios >= 0.003   # keep features with ≥0.3% importance
-        selected_feats = [f for f, keep in zip(FEATURES, selected_mask) if keep]
-        # Always keep at least 10 features
-        if len(selected_feats) < 10:
-            top_idx = np.argsort(xgb_imp)[::-1][:10]
-            selected_feats = [FEATURES[i] for i in top_idx]
-    else:
-        selected_feats = FEATURES
+    # ── Feature importance filtering (Professional RFE Upgrade) ──────────
+    # We use RFE with a Random Forest estimator to find the optimal subset 
+    # of features, removing those that contribute only noise.
+    from sklearn.feature_selection import RFE
+    
+    logger.info("Starting Recursive Feature Elimination (RFE)...")
+    rfe_selector = RFE(
+        estimator=RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+        n_features_to_select=min(40, len(FEATURES)), # Target top 40 features
+        step=5
+    )
+    rfe_selector.fit(X_train_sc, y_train_enc)
+    selected_mask = rfe_selector.support_
+    selected_feats = [f for f, keep in zip(FEATURES, selected_mask) if keep]
 
-    logger.info("Feature selection: %d/%d features kept", len(selected_feats), len(FEATURES))
+    logger.info("RFE Complete: %d/%d features kept", len(selected_feats), len(FEATURES))
 
     # Retrain scaler + all models on selected features only
     X_train_sel = _safe_float_array(df.iloc[:train_end][selected_feats])

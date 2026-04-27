@@ -5,6 +5,7 @@ import SignalPage from './pages/SignalPage';
 import LiveMarketPage from './pages/LiveMarketPage';
 import HistoryPage from './pages/HistoryPage';
 import ScreenerPage from './pages/ScreenerPage';
+import MarketSentimentPage from './pages/MarketSentimentPage';
 import Toast from './components/ui/Toast';
 import { ToastProvider } from './contexts/ToastContext';
 import { MarketProvider } from './hooks/useMarketSocket.jsx';
@@ -27,6 +28,8 @@ function getPageInfoFromUrl() {
         symbol = parts[1] || null;
     } else if (parts[0] === 'screener') {
         page = 'screener';
+    } else if (parts[0] === 'sentiment') {
+        page = 'sentiment';
     }
 
     return { page, symbol };
@@ -36,7 +39,7 @@ export default function App() {
     const [{ page, symbol }, setUrlInfo] = useState(getPageInfoFromUrl());
 
     const navigate = (key, sub = null) => {
-        const paths = { home: '/', live: '/live', dashboard: '/signal', history: '/history', screener: '/screener' };
+        const paths = { home: '/', live: '/live', dashboard: '/signal', history: '/history', screener: '/screener', sentiment: '/sentiment' };
         let fullPath = paths[key] ?? '/';
         if (sub) fullPath += `/${sub}`;
         
@@ -68,6 +71,7 @@ export default function App() {
                         <div className={page === 'live'      ? '' : 'hidden'}><LiveMarketPage symbol={symbol} /></div>
                         <div className={page === 'history'   ? '' : 'hidden'}><HistoryPage symbol={symbol} /></div>
                         <div className={page === 'screener'  ? '' : 'hidden'}><ScreenerPage /></div>
+                        <div className={page === 'sentiment' ? '' : 'hidden'}><MarketSentimentPage /></div>
                     </div>
                 </div>
             </MarketProvider>
