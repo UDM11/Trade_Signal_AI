@@ -165,7 +165,7 @@ export default function BacktestResults({ stats, isSidebar }) {
     // No meaningful backtest data — show empty state
     const isEmpty = !total_trades || (return_pct === 0 && win_rate === 0 && total_trades === 0);
     if (isEmpty) return (
-        <div className="rounded-3xl border border-dashed border-white/10 p-8 flex flex-col items-center gap-3 text-center"
+        <div className="h-full rounded-2xl border border-dashed border-white/10 p-8 flex flex-col items-center justify-center gap-3 text-center"
             style={{ background: 'rgba(8,15,26,0.4)' }}>
             <BarChart2 className="w-8 h-8 text-slate-700" />
             <p className="text-xs font-black text-slate-600 uppercase tracking-widest">Insufficient Backtest Data</p>
@@ -186,7 +186,7 @@ export default function BacktestResults({ stats, isSidebar }) {
     const RatingIcon = rating.icon;
 
     return (
-        <div className={`rounded-3xl overflow-hidden border border-white/5 shadow-2xl backdrop-blur-xl`}
+        <div className={`h-full flex flex-col rounded-2xl overflow-hidden border border-white/5 shadow-2xl backdrop-blur-xl`}
             style={{ background: 'rgba(8, 15, 26, 0.6)' }}>
 
             {/* ── Header ──────────────────────────────────────────────────── */}

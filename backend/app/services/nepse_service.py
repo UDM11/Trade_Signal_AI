@@ -523,12 +523,23 @@ async def get_live_data() -> dict:
 
 
 async def get_stock_chart(symbol: str) -> dict:
-    """
-    Historical daily OHLCV using getCompanyPriceVolumeHistory(id) — plain GET,
-    no WASM auth needed. Security ID is resolved from the module-level cache
-    built when get_live_data() was last called.
-    """
-    symbol = symbol.upper().strip()
+    """Fetches daily OHLCV history for a symbol using securityId from cache."""
+    from app.services.nepse_service import _last_good_response
+    
+    symbol = symbol.strip().upper()
+    sec_id = _symbol_id_cache.get(symbol)
+    
+    # Fallback: Search live market cache if ID is missing from static map
+    if not sec_id and _last_good_response:
+        for s in _last_good_response.get("stocks", []):
+            if s.get("symbol") == symbol:
+                sec_id = s.get("securityId") or s.get("id")
+                if sec_id:
+                    _symbol_id_cache[symbol] = sec_id
+                    break
+                
+    if not sec_id:
+        return {"error": f"Security ID not found for {symbol}", "chart_data": []}
 
     async def get_db_data(sym: str):
         try:

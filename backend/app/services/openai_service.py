@@ -228,7 +228,7 @@ HARD CONSTRAINTS (must be respected):
 
 Respond with ONLY a valid JSON object. No markdown fences. No extra text. Start with {{ and end with }}:
 {{
-  "explanation": "<4 sentences: (1) current market structure/trend context, (2) how latest News/Sentiment correlations with technical signals (ADX/RSI), (3) exact entry Rs. price, T1 and T2 targets with % upside/downside, stop loss level, (4) timeline reasoning and primary risk factors>",
+  "explanation": "Return 4 distinct paragraphs separated by \\n\\n: (1) Market Structure & Trend Context (discussing MACD/MA/ADX), (2) News/Sentiment Correlations with technical signals, (3) Detailed Trade Execution Logic (integrating entry/target/stop prices and breakout levels), (4) Timeline Reasoning & Primary Risk Factors.",
   "market_structure": "<BULLISH|BEARISH|RANGING>",
   "ideal_entry": <number>,
   "entry_zone_low": <number>,

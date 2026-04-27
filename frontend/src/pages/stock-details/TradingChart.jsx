@@ -308,6 +308,7 @@ export default function TradingChart({
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [intradayData, setIntradayData] = useState([]);
     const [loadingIntraday, setLoadingIntraday] = useState(false);
+    const [hoveredInds, setHoveredInds] = useState(null);
 
     const tfObj = useMemo(() => TFS.find(t => t.label === tf), [tf]);
 
@@ -526,12 +527,31 @@ export default function TradingChart({
         S.current.wrOb    = sc.addSeries(LineSeries, lineOpt("rgba(239,68,68,0.35)", 1, 2));
         S.current.wrOs    = sc.addSeries(LineSeries, lineOpt("rgba(34,197,94,0.35)",  1, 2));
 
-        // ── Crosshair OHLCV ────────────────────────────────────────────────────
+        // ── Crosshair Hover Logic ─────────────────────────────────────────────
         mc.subscribeCrosshairMove(param => {
-            if (!param.time || !param.seriesData) { setOhlcv(null); return; }
-            const c = param.seriesData.get(S.current.candle);
+            if (!param.time || !param.seriesData) { 
+                setHoveredInds(null);
+                setOhlcv(null); 
+                return; 
+            }
+            
+            const c = param.seriesData.get(S.current.candle) || param.seriesData.get(S.current.lineChart);
             const v = param.seriesData.get(S.current.vol);
-            if (c) setOhlcv({ ...c, volume: v?.value ?? 0, up: c.close >= c.open });
+            
+            if (c) {
+                setOhlcv({ ...c, volume: v?.value ?? 0, up: c.close >= c.open });
+                
+                // Collect all active indicator values at this point
+                const inds = {};
+                Object.keys(S.current).forEach(key => {
+                    const series = S.current[key];
+                    const data = param.seriesData.get(series);
+                    if (data && (data.value !== undefined || data.close !== undefined)) {
+                        inds[key] = data.value ?? data.close ?? data.k ?? data.upper;
+                    }
+                });
+                setHoveredInds(inds);
+            }
         });
 
         // ── Sync timescales ────────────────────────────────────────────────────
@@ -661,10 +681,19 @@ export default function TradingChart({
         if (entry)              mkLine(entry,        "#94a3b8",                         1, 3, idealEntry ? `⟶ Entry  Rs.${entry.toFixed(2)}`      : `⟶ Close  Rs.${entry.toFixed(2)}`);
         if (entryZoneLow  && entryZoneLow  !== entry) mkLine(entryZoneLow,  "rgba(148,163,184,0.3)", 1, 2, "Zone Low",  false);
         if (entryZoneHigh && entryZoneHigh !== entry) mkLine(entryZoneHigh, "rgba(148,163,184,0.3)", 1, 2, "Zone High", false);
-        if (targetPrice)        mkLine(targetPrice,  isSell ? "#ef5350" : "#26a69a",    2, 0, `${isHold ? "⬆ Resist" : "🎯 T1"}  Rs.${targetPrice.toFixed(2)}  (${targetPct >= 0 ? "+" : ""}${targetPct}%)`);
-        if (target2)            mkLine(target2,      isSell ? "#f87171" : "#34d399",    1, 1, `🎯 T2  Rs.${target2.toFixed(2)}  (${target2Pct >= 0 ? "+" : ""}${target2Pct}%)`);
-        if (stopLoss)           mkLine(stopLoss,     isSell ? "#26a69a" : "#ef5350",    2, 0, `${isHold ? "⬇ Supp"  : "🛑 SL"}  Rs.${stopLoss.toFixed(2)}  (${stopLossPct}%)`);
-        if (trailingStop)       mkLine(trailingStop, "#f59e0b",                         1, 2, `~ Trail  Rs.${trailingStop.toFixed(2)}`);
+        if (targetPrice) {
+            const t1Pct = targetPct ?? (entry ? ((targetPrice - entry) / entry * 100).toFixed(2) : 0);
+            mkLine(targetPrice, isSell ? "#ef5350" : "#26a69a", 2, 0, `🎯 T1  Rs.${Number(targetPrice).toFixed(2)}  (${t1Pct >= 0 ? "+" : ""}${t1Pct}%)`);
+        }
+        if (target2) {
+            const t2Pct = target2Pct ?? (entry ? ((target2 - entry) / entry * 100).toFixed(2) : 0);
+            mkLine(target2, isSell ? "#f87171" : "#34d399", 1, 1, `🎯 T2  Rs.${Number(target2).toFixed(2)}  (${t2Pct >= 0 ? "+" : ""}${t2Pct}%)`);
+        }
+        if (stopLoss) {
+            const slPct = stopLossPct ?? (entry ? ((stopLoss - entry) / entry * 100).toFixed(2) : 0);
+            mkLine(stopLoss, isSell ? "#26a69a" : "#ef5350", 2, 0, `🛑 SL  Rs.${Number(stopLoss).toFixed(2)}  (${slPct}%)`);
+        }
+        if (trailingStop)       mkLine(trailingStop, "#f59e0b",                         1, 2, `~ Trail  Rs.${Number(trailingStop).toFixed(2)}`);
 
         // ── Signal markers ─────────────────────────────────────────────────────
         if (markersP.current) { try { markersP.current.setMarkers([]); } catch (e) { void e; } }
@@ -803,19 +832,11 @@ export default function TradingChart({
                             {isUp ? "▲" : "▼"} {isUp ? "+" : ""}{chgPct}%
                         </span>
                     </div>
-                    <div className="flex items-center gap-2 mt-1 overflow-hidden whitespace-nowrap">
-                        {ohlcv ? (
-                             <div className="flex items-center gap-1.5 text-[7px] sm:text-[9px] font-black uppercase tracking-wider text-slate-500">
-                                <span>O <span className="text-slate-300">{fmt(ohlcv.open, 1)}</span></span>
-                                <span>H <span className="text-slate-300">{fmt(ohlcv.high, 1)}</span></span>
-                                <span>L <span className="text-slate-300">{fmt(ohlcv.low, 1)}</span></span>
-                             </div>
-                        ) : (
-                            <div className="flex items-center gap-1.5 text-[7px] sm:text-[9px] font-black uppercase tracking-wider text-slate-500">
-                                <span>52W H <span className="text-buy">{fmt(stats52w?.high, 0)}</span></span>
-                                <span>52W L <span className="text-sell">{fmt(stats52w?.low, 0)}</span></span>
-                            </div>
-                        )}
+                    <div className="flex items-center gap-2 mt-1">
+                        <div className="flex items-center gap-1.5 text-[7px] sm:text-[9px] font-black uppercase tracking-wider text-slate-500">
+                            <span>52W H <span className="text-buy">{fmt(stats52w?.high, 0)}</span></span>
+                            <span>52W L <span className="text-sell">{fmt(stats52w?.low, 0)}</span></span>
+                        </div>
                     </div>
                 </div>
 
@@ -888,20 +909,69 @@ export default function TradingChart({
                 </button>
             </div>
 
-            {/* ── Indicator legend ───────────────────────────────────────────── */}
-            {(overlay.sma20 || overlay.sma50 || overlay.ema200 || overlay.ema9 || overlay.ema21 || overlay.bb || overlay.vwap || overlay.ich) && (
-                <div className="flex items-center flex-wrap gap-2 sm:gap-4 px-3 sm:px-5 py-1 sm:py-2 shrink-0 bg-[#040a15] border-b border-white/5">
-                    {overlay.sma20  && legendVals.sma20  != null && <IndicatorLegend label="MA20" value={fmt(legendVals.sma20)} color="#3b82f6" />}
-                    {overlay.sma50  && legendVals.sma50  != null && <IndicatorLegend label="MA50" value={fmt(legendVals.sma50)} color="#f59e0b" />}
-                    {overlay.ema200 && legendVals.ema200 != null && <IndicatorLegend label="EMA200" value={fmt(legendVals.ema200)} color="#e879f9" />}
-                    {overlay.vwap   && legendVals.vwap   != null && <IndicatorLegend label="VWAP" value={fmt(legendVals.vwap)} color="#14b8a6" />}
-                </div>
-            )}
-
             {/* ── Main chart area ────────────────────────────────────────────── */}
             <div className="relative overflow-hidden flex-1" style={{ width: "100%", minHeight: "200px" }}>
                 <div ref={mainRef} style={{ width: "100%", height: "100%" }} />
                 
+                {/* ── Dynamic Floating HUD ── */}
+                <div className="absolute top-4 left-4 z-30 pointer-events-none flex flex-col gap-2">
+                    {/* OHLCV Hover HUD */}
+                    {ohlcv && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl">
+                            <div className="flex items-center gap-2 pr-3 border-r border-white/10">
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Market</span>
+                                <span className="text-xs font-black tabular-nums" style={{ color: ohlcv.close >= ohlcv.open ? '#26a69a' : '#ef5350' }}>
+                                    {ohlcv.close >= ohlcv.open ? '▲' : '▼'} {fmt(ohlcv.close)}
+                                </span>
+                            </div>
+                            <div className="flex gap-4">
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] font-black text-slate-500 uppercase">Open</span>
+                                    <span className="text-xs font-bold text-slate-200">{fmt(ohlcv.open, 1)}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] font-black text-slate-500 uppercase">High</span>
+                                    <span className="text-xs font-bold text-slate-200">{fmt(ohlcv.high, 1)}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] font-black text-slate-500 uppercase">Low</span>
+                                    <span className="text-xs font-bold text-slate-200">{fmt(ohlcv.low, 1)}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-[8px] font-black text-slate-500 uppercase">Vol</span>
+                                    <span className="text-xs font-bold text-blue-400">
+                                        {ohlcv.volume >= 1000000 ? (ohlcv.volume / 1000000).toFixed(2) + 'M' : 
+                                         ohlcv.volume >= 1000 ? (ohlcv.volume / 1000).toFixed(1) + 'K' : ohlcv.volume}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Indicator Values HUD */}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 rounded-xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl">
+                        {OVERLAYS.map(({ key, label, color }) => (
+                            overlay[key] && (
+                                <div key={key} className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.2)]" style={{ background: color }} />
+                                    <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">{label}</span>
+                                    <span className="text-xs font-black text-white tabular-nums">
+                                        {fmt(hoveredInds?.[key] ?? legendVals[key])}
+                                    </span>
+                                </div>
+                            )
+                        ))}
+                        {subInd && (
+                            <div className="flex items-center gap-2 border-l border-white/10 pl-4 ml-1">
+                                <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">{subInd}</span>
+                                <span className="text-xs font-black text-blue-400 tabular-nums">
+                                    {fmt(hoveredInds?.[`${subInd}Line`] ?? (subInd === 'rsi' ? legendVals.rsi : null))}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
                 {loadingIntraday && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-md z-20">
                         <div className="relative">

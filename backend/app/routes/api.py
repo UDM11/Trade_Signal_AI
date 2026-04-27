@@ -539,13 +539,24 @@ async def analyze_stock_deep(request: Request, symbol: str):
 
         # Run the full pipeline
         # _predict_one now returns the full payload dict
-        result = await _predict_one(symbol, global_artifacts)
+        result = await _predict_one(symbol, global_artifacts, force_ai=True)
         
-        if "error" in result and result.get("prediction") == "ERROR":
-            raise HTTPException(status_code=400, detail=f"Analysis failed for {symbol}: {result.get('error')}")
+        if result == "NO_DATA":
+            raise HTTPException(status_code=400, detail=f"No price data found for {symbol}. NEPSE server might be down.")
+        
+        if result == "INSUFFICIENT":
+            raise HTTPException(status_code=400, detail=f"{symbol} has insufficient history for AI analysis (need at least 35 days).")
+            
+        if result == "ERROR":
+            raise HTTPException(status_code=400, detail=f"A technical error occurred during {symbol} analysis.")
 
-        if result in ("NO_DATA", "INSUFFICIENT", "ERROR"):
-            raise HTTPException(status_code=400, detail=f"Analysis failed for {symbol}: {result}")
+        # ── SAVE TO DATABASE / HISTORY ──
+        try:
+            from app.services.scheduler import _save_to_db
+            # Use await because _save_to_db is async
+            await _save_to_db(symbol, result)
+        except Exception as se:
+            logger.error("Failed to save deep analysis for %s: %s", symbol, se)
 
         return result
 

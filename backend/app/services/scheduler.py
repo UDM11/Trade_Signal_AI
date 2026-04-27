@@ -162,10 +162,10 @@ async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> No
     _upsert_local(symbol, payload)
 
 
-async def _predict_one(symbol: str, artifacts: dict = None) -> str:
+async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = False) -> dict:
     """
     Full prediction pipeline for a single stock symbol.
-    Returns the signal string or an error code.
+    Returns the full payload dictionary.
     """
     from app.indicators import add_indicators
     from app.model import train_or_load_model, predict_latest
@@ -183,12 +183,12 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
         history_days = len(df)
         logger.info("[DEEP] Analyzing %s with %d days of historical data", symbol, history_days)
         
-        if history_days < 30:
+        if history_days < 25:
             return "INSUFFICIENT"
 
         # CPU-bound work → run in thread pool so the event loop stays free
         df = await asyncio.to_thread(add_indicators, df)
-        if len(df) < 15:
+        if len(df) < 10:
             return "INSUFFICIENT"
 
         # If no global artifacts were passed, fall back to ad-hoc training
@@ -217,14 +217,15 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
         latest            = df.iloc[-1]
         indicators_summary = _build_indicators_summary(latest)
 
-        # OpenAI only for BUY — SELL/HOLD use math fallback
+        # Generate deep explanation
+        # If force_ai is True (from manual request), we generate text even for SELL/HOLD
         ai_result = await asyncio.to_thread(
             generate_explanation,
             prediction,
             confidence,
             indicators_summary,
-            news_data, # Pass full dict now
-            force_fallback=(prediction != "BUY")
+            news_data,
+            force_fallback=(prediction != "BUY" and not force_ai)
         )
 
         # Build chart data and signal history from the indicator-enriched df
@@ -243,29 +244,50 @@ async def _predict_one(symbol: str, artifacts: dict = None) -> str:
             if i < len(all_signals) and all_signals[i] in ("BUY", "SELL"):
                 signal_history.append({"time": t, "signal": all_signals[i]})
 
+        last_close = float(latest.get("Close", 0))
+        # Ensure T1 and T2 are in logical order
+        t1 = ai_result.get("target_price")
+        t2 = ai_result.get("target2")
+        
+        if t1 and t2:
+            if prediction == "BUY" or prediction == "HOLD":
+                # For Buy/Hold, T1 should be lower than T2
+                target_price = min(t1, t2)
+                target2 = max(t1, t2)
+            else:
+                # For Sell, T1 (first exit) should be higher than T2 (deep exit)
+                target_price = max(t1, t2)
+                target2 = min(t1, t2)
+        else:
+            target_price = t1
+            target2 = t2
+
         payload = {
             "prediction":       prediction,
             "confidence_score": float(f"{confidence:.2f}"),
             "model_used":       "XGBoost+LightGBM+RF Ensemble",
             "explanation":      ai_result.get("explanation", ""),
-            "target_price":     ai_result.get("target_price"),
+            "target_price":     target_price,
+            "target_pct":       round(((target_price - last_close) / last_close) * 100, 2) if target_price and last_close else 0,
             "stop_loss":        ai_result.get("stop_loss"),
-            "estimated_days":   ai_result.get("estimated_days"),
-            "target_pct":       ai_result.get("target_pct"),
             "stop_loss_pct":    ai_result.get("stop_loss_pct"),
+            "estimated_days":   ai_result.get("estimated_days"),
             "risk_reward":      ai_result.get("risk_reward"),
             "all_proba":        all_proba,
             "indicators":       indicators_summary,
             "model_metrics":    model_metrics,
             "ai_analysis": {
+                "explanation":      ai_result.get("explanation", ""),
                 "ideal_entry":       ai_result.get("ideal_entry"),
                 "entry_zone_low":    ai_result.get("entry_zone_low"),
                 "entry_zone_high":   ai_result.get("entry_zone_high"),
                 "entry_condition":   ai_result.get("entry_condition"),
-                "target2":           ai_result.get("target2"),
-                "target2_pct":       ai_result.get("target2_pct"),
+                "target_price":      target_price,
+                "target2":           target2,
+                "target2_pct":       round(((target2 - last_close) / last_close) * 100, 2) if target2 and last_close else 0,
                 "trailing_stop":     ai_result.get("trailing_stop"),
                 "trailing_stop_pct": ai_result.get("trailing_stop_pct"),
+                "stop_loss":         ai_result.get("stop_loss"),
                 "exit_condition":    ai_result.get("exit_condition"),
                 "risk_note":         ai_result.get("risk_note"),
                 "market_structure":  ai_result.get("market_structure"),

@@ -59,7 +59,7 @@ export default function App() {
     return (
         <ToastProvider>
             <MarketProvider>
-                <div className="min-h-screen bg-background text-text font-sans selection:bg-primary/30">
+                <div className="min-h-screen bg-background text-text font-sans selection:bg-primary/30 overflow-x-hidden">
                     <Navbar page={page} setPage={navigate} />
                     <div className="p-4 sm:p-6 md:p-8">
                         {/* Pages stay mounted — CSS hide/show preserves state & avoids remount delays */}

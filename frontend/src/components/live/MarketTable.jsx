@@ -41,17 +41,17 @@ function StockRow({ stock, onSelect, prediction }) {
         <tr onClick={() => onSelect(stock)}
             className={`cursor-pointer border-t group transition-colors hover:bg-white/5 ${flashClass}`}
             style={{ borderColor: 'var(--color-glass-border)' }}>
-            <td className="px-2 sm:px-4 py-2 sm:py-3 sticky left-0 bg-[#0f172a] sm:bg-transparent z-10">
+            <td className="px-1.5 sm:px-4 py-1.5 sm:py-3 sticky left-0 bg-[#0f172a] sm:bg-transparent z-10">
                 <div className="flex items-center gap-1.5 sm:gap-2">
                     <span className="font-black text-white text-[11px] sm:text-sm">{stock.symbol}</span>
                 </div>
                 {stock.name && <p className="text-[7px] sm:text-xs text-text-muted truncate max-w-[60px] sm:max-w-35 mt-0.5">{stock.name}</p>}
             </td>
-            <td className="px-2 sm:px-4 py-2 sm:py-3 font-bold tabular-nums text-[10px] sm:text-sm text-right" style={{ color: cc }}>{fmt(stock.ltp)}</td>
-            <td className="px-2 sm:px-4 py-2 sm:py-3 font-semibold tabular-nums text-[10px] sm:text-sm text-right hidden sm:table-cell" style={{ color: cc }}>
+            <td className="px-1.5 sm:px-4 py-1.5 sm:py-3 font-bold tabular-nums text-[10px] sm:text-sm text-right" style={{ color: cc }}>{fmt(stock.ltp)}</td>
+            <td className="px-1.5 sm:px-4 py-1.5 sm:py-3 font-semibold tabular-nums text-[10px] sm:text-sm text-right hidden sm:table-cell" style={{ color: cc }}>
                 {stock.change >= 0 ? '+' : ''}{fmt(stock.change)}
             </td>
-            <td className="px-2 sm:px-4 py-2 sm:py-3 text-right">
+            <td className="px-1.5 sm:px-4 py-1.5 sm:py-3 text-right">
                 <div className="flex items-center justify-end gap-1.5 sm:gap-2">
                     <span className="font-bold px-1.5 py-0.5 rounded text-[8px] sm:text-xs tabular-nums"
                         style={{ color: cc, background: `${cc}10`, border: `1px solid ${cc}25` }}>
@@ -65,7 +65,7 @@ function StockRow({ stock, onSelect, prediction }) {
             <td className="px-4 py-3 tabular-nums text-sm text-right text-text-muted hidden lg:table-cell">{fmtVol(stock.volume)}</td>
             <td className="px-4 py-3 text-right">
                 <button
-                    className="px-2 sm:px-3 py-1 rounded-lg text-[10px] sm:text-xs font-bold transition-all"
+                    className="px-1.5 sm:px-3 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-xs font-bold transition-all"
                     style={{ background: 'rgba(59,130,246,0.08)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.18)' }}
                     onMouseEnter={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.18)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.4)'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = 'rgba(59,130,246,0.08)'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.18)'; }}

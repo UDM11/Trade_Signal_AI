@@ -6,6 +6,7 @@ import {
 import BacktestResults from './BacktestResults';
 import PredictionResult from './PredictionResult';
 import TradingChart from './TradingChart';
+import { invalidate } from '../../cache/predictionsCache';
 
 const MOBILE_TABS = [
     { id: 'chart',    label: 'Chart',    Icon: BarChart3 },
@@ -43,8 +44,9 @@ function ExecutionOverview({ result, sigColor }) {
 
     const rows = [
         { label: 'Ideal Entry', price: ideal_entry ?? close,  pct: null,          color: sigColor },
-        { label: 'T1 Target',   price: target_price,          pct: target_pct,    color: isSell ? '#ef4444' : '#10b981' },
-        { label: 'Stop Loss',   price: stop_loss,             pct: stop_loss_pct, color: '#ef4444' },
+        { label: 'T1 Target',   price: result.target_price,   pct: result.target_pct,    color: isSell ? '#ef4444' : '#10b981' },
+        { label: 'T2 Target',   price: result.target2,        pct: result.target2_pct,   color: isSell ? '#f87171' : '#34d399' },
+        { label: 'Stop Loss',   price: result.stop_loss,      pct: result.stop_loss_pct, color: '#ef4444' },
     ];
 
     return (
@@ -179,13 +181,24 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
                 entry_zone_low: data.ai_analysis?.entry_zone_low || data.entry_zone_low,
                 entry_zone_high:data.ai_analysis?.entry_zone_high || data.entry_zone_high,
                 target_price:   data.target_price,
-                target2:        data.ai_analysis?.target2 || data.target2,
+                target_pct:     data.target_pct,
+                target2:        data.ai_analysis?.target2 || data.target2 || data.target2_price,
+                target2_pct:    data.ai_analysis?.target2_pct || data.target2_pct,
                 stop_loss:      data.stop_loss,
+                stop_loss_pct:  data.stop_loss_pct,
+                trailing_stop:  data.ai_analysis?.trailing_stop || data.trailing_stop,
+                trailing_stop_pct: data.ai_analysis?.trailing_stop_pct || data.trailing_stop_pct,
                 risk_reward:    data.risk_reward,
                 estimated_days: data.estimated_days,
-                backtest:       data.backtest_stats || data.backtest,
+                entry_condition:data.ai_analysis?.entry_condition || data.entry_condition,
+                exit_condition: data.ai_analysis?.exit_condition || data.exit_condition,
+                risk_note:      data.ai_analysis?.risk_note || data.risk_note,
+                market_structure:data.ai_analysis?.market_structure || data.market_structure,
+                backtest:       data.ai_analysis?.backtest || data.backtest_stats || data.backtest,
                 chartData:      data.chart_data?.length > 0 ? data.chart_data : prev.chartData
             }));
+            
+            invalidate(); // Force history refresh
             
             // Switch to analysis tab to show results
             setSidebarTab('analysis');
@@ -258,29 +271,6 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
                             {selected.prediction}
                         </div>
                         
-                        {/* Deep Analysis Button */}
-                        <button 
-                            onClick={handleDeepAnalysis}
-                            disabled={analyzing}
-                            className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all shadow-lg ${
-                                analyzing 
-                                ? 'bg-white/5 text-slate-500 cursor-not-allowed' 
-                                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/20 active:scale-95'
-                            }`}
-                        >
-                            {analyzing ? (
-                                <>
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                    Analyzing...
-                                </>
-                            ) : (
-                                <>
-                                    <Brain className="w-3 h-3 text-blue-300" />
-                                    Deep AI Analysis
-                                </>
-                            )}
-                        </button>
-
                         {(syncing && !analyzing) && (
                             <div className="flex items-center gap-1 text-[8px] sm:text-[10px] font-black text-blue-400 uppercase tracking-widest shrink-0">
                                 <Loader2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 animate-spin" />

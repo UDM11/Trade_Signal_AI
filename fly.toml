@@ -21,11 +21,11 @@ primary_region = 'bom'
   min_machines_running = 1
 
   [[http_service.checks]]
-    grace_period = "60s"
-    interval     = "30s"
+    grace_period = "300s"
+    interval     = "60s"
     method       = "GET"
     path         = "/api/health"
-    timeout      = "15s"
+    timeout      = "20s"
 
   [http_service.concurrency]
     type       = "requests"
