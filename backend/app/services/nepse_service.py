@@ -419,6 +419,9 @@ async def get_live_data(force_refresh: bool = False) -> dict:
             "value":      _g(i, "currentValue", "index", "nepseIndex"),
             "change":     _g(i, "change", "pointChange"),
             "change_pct": _g(i, "perChange", "percentChange", "percentageChange"),
+            "open":       _g(i, "open", "openPrice"),
+            "high":       _g(i, "high", "highPrice"),
+            "low":        _g(i, "low", "lowPrice"),
         }
         
         # Primary Index
@@ -430,6 +433,26 @@ async def get_live_data(force_refresh: bool = False) -> dict:
         # Real Sectors (Banking, Hydro, etc.)
         else:
             sectors_map[idx_data["name"]] = idx_data
+
+    # 1.5. Calculate OHLC for NEPSE Index from intraday graph if missing
+    if index and (not index.get("open") or not index.get("high") or index["open"] == index["value"]):
+        graph_list = _to_list(graph_raw)
+        if graph_list:
+            # graph_raw is usually [ [timestamp, value], ... ]
+            vals = []
+            for p in graph_list:
+                if isinstance(p, (list, tuple)) and len(p) >= 2:
+                    try: vals.append(float(p[1]))
+                    except: continue
+                elif isinstance(p, dict):
+                    v = _g(p, "value", "ltp", "price")
+                    if v: vals.append(v)
+            
+            if vals:
+                index["open"] = vals[0]
+                index["high"] = max(vals)
+                index["low"] = min(vals)
+                logger.info(f"Derived NEPSE Index OHLC from graph: O={index['open']}, H={index['high']}, L={index['low']}")
 
     # 2. Fallback/Augment: Always check stocks to find missing sectors
     if stocks:
@@ -605,6 +628,22 @@ async def get_stock_chart(symbol: str) -> dict:
                     _symbol_id_cache[symbol] = sec_id
                     break
                 
+    if symbol == 'NEPSE':
+        # Use the dedicated helper which handles CSV + Chukul API merge
+        raw_history = await get_nepse_history()
+        # Convert volume key to 'value' for chart compatibility
+        processed = []
+        for d in raw_history:
+            processed.append({
+                "time":  d["time"],
+                "open":  d["open"],
+                "high":  d["high"],
+                "low":   d["low"],
+                "close": d["close"],
+                "value": d.get("volume") or d.get("value") or 0
+            })
+        return {"symbol": "NEPSE", "chart_data": processed, "count": len(processed)}
+
     if not sec_id:
         return {"error": f"Security ID not found for {symbol}", "chart_data": []}
 
@@ -630,21 +669,6 @@ async def get_stock_chart(symbol: str) -> dict:
             logger.error("Supabase data fetch failed: %s", e)
             return []
     
-    if symbol == 'NEPSE':
-        # Use the dedicated helper which handles CSV + Chukul API merge
-        raw_history = await get_nepse_history()
-        # Convert volume key to 'value' for chart compatibility
-        processed = []
-        for d in raw_history:
-            processed.append({
-                "time":  d["time"],
-                "open":  d["open"],
-                "high":  d["high"],
-                "low":   d["low"],
-                "close": d["close"],
-                "value": d.get("volume") or d.get("value") or 0
-            })
-        return {"symbol": "NEPSE", "chart_data": processed, "count": len(processed)}
 
     nepse  = await _client()
 

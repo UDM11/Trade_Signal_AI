@@ -57,7 +57,7 @@ export default function HomePage({ setPage }) {
     if (loading) return <HomeSkeleton />;
 
     return (
-        <main className="max-w-400 mx-auto space-y-6 sm:space-y-8 lg:space-y-10 pb-16 sm:pb-20 lg:pb-24 px-2 sm:px-4 lg:px-6 animate-in fade-in duration-700">
+        <main className="max-w-400 mx-auto space-y-6 sm:space-y-8 lg:space-y-10 pb-16 sm:pb-20 lg:pb-24 px-4 sm:px-4 lg:px-6 animate-in fade-in duration-700">
 
             {/* ── Hero ─────────────────────────────────────────────────────── */}
             <div className="group relative rounded-xl sm:rounded-2xl lg:rounded-3xl overflow-hidden p-4 sm:p-8 lg:p-14 shadow-2xl transition-all duration-700 hover:shadow-blue-500/20"

@@ -75,7 +75,8 @@ export default function NepseChartSection({ data: intradayData = [], index, onSe
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6 mb-4 sm:mb-8">
                 <div className="flex-1">
                     <div className="flex items-center flex-wrap gap-2 sm:gap-3">
-                        <h3 className="text-[8px] sm:text-[10px] font-black text-text-muted uppercase tracking-[0.2em] sm:tracking-[0.3em] flex items-center gap-1.5 sm:gap-2">
+                        <h3 className="text-[8px] sm:text-[10px] font-black text-text-muted uppercase tracking-[0.2em] sm:tracking-[0.3em] flex items-center gap-1.5 sm:gap-2 cursor-pointer hover:text-blue-400 transition-colors"
+                            onClick={handleNavigate}>
                             <Activity className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-blue-500" />
                             NEPSE Index
                             <span className={`w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full animate-pulse ${isUp ? 'bg-bullish shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-bearish shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} />

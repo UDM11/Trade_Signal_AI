@@ -354,7 +354,7 @@ export default function ScreenerPage({ onSelectStock }) {
 
     if (selected) {
         return (
-            <main className="max-w-[1600px] mx-auto px-1.5 sm:px-8 pt-4 sm:pt-8 pb-32">
+            <main className="max-w-[1600px] mx-auto px-0 sm:px-8 pt-4 sm:pt-8 pb-32">
                 <StockDetailsPage selected={selected} onBack={handleBack} />
             </main>
         );
@@ -373,7 +373,7 @@ export default function ScreenerPage({ onSelectStock }) {
     }
 
     return (
-        <main className="max-w-[1600px] mx-auto px-1.5 sm:px-8 pt-2 sm:pt-8 pb-32">
+        <main className="max-w-[1600px] mx-auto px-4 sm:px-8 pt-4 sm:pt-8 pb-32">
             {/* ── Elite Header Dashboard ────────────────────────────────────── */}
             <div className="relative p-3 sm:p-5 rounded-lg sm:rounded-xl shadow-2xl mb-4 sm:mb-8 overflow-hidden" 
                 style={{ background: 'rgba(8, 15, 26, 0.6)', border: '1px solid rgba(255, 255, 255, 0.05)', backdropFilter: 'blur(40px)' }}>

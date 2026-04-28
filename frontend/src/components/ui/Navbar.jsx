@@ -10,7 +10,8 @@ function fmt(n, d = 2) {
     return Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 function fmtVol(n) {
-    if (!n) return '—';
+    if (n == null || isNaN(n)) return '—';
+    if (n === 0) return '0';
     if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
     if (n >= 1e7) return (n / 1e7).toFixed(2) + 'Cr';
     if (n >= 1e5) return (n / 1e5).toFixed(2) + 'L';
@@ -22,7 +23,6 @@ const TABS = [
     { key: 'home',      label: 'Home',        Icon: Home              },
     { key: 'live',      label: 'Live Market', Icon: Radio             },
     { key: 'screener',  label: 'Screener',    Icon: SlidersHorizontal },
-    { key: 'sentiment', label: 'Sentiment',   Icon: BarChart2         },
     { key: 'dashboard', label: 'Signal AI',   Icon: Activity          },
     { key: 'history',   label: 'History',     Icon: History           },
 ];
@@ -72,8 +72,8 @@ export default function Navbar({ page, setPage }) {
             <div className="w-full px-3 sm:px-6 lg:px-8 h-14 sm:h-20 lg:h-24 flex justify-between items-center md:grid md:grid-cols-[1fr_auto_1fr] gap-2">
 
                 {/* LEFT: NEPSE stats */}
-                <div className="flex items-center min-w-0">
-                    <div className="flex flex-col gap-0.5 lg:gap-1 min-w-0">
+                <div className="flex items-center min-w-0 cursor-pointer group/nepse" onClick={() => setPage('live', 'NEPSE')}>
+                    <div className="flex flex-col gap-0.5 lg:gap-1 min-w-0 transition-transform group-hover/nepse:translate-x-1">
 
                         {/* Row 1: NEPSE label + value + change */}
                         <div className="flex items-center gap-1 sm:gap-1.5 md:gap-2">

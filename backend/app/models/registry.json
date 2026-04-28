@@ -73,6 +73,59 @@
                 }
             },
             "status": "staging"
+        },
+        {
+            "filename": "model_xgb_20260428_214347.pkl",
+            "date": "2026-04-28T21:43:48.131782",
+            "accuracy": 52.19,
+            "metrics": {
+                "accuracy": 52.19,
+                "f1_macro": 50.69,
+                "threshold_used": 280.343,
+                "features_used": 40,
+                "tuned_params_xgb": {
+                    "subsample": 0.8,
+                    "reg_lambda": 1.5,
+                    "reg_alpha": 0,
+                    "n_estimators": 300,
+                    "min_child_weight": 5,
+                    "max_depth": 4,
+                    "learning_rate": 0.03,
+                    "gamma": 0.05,
+                    "colsample_bytree": 0.9
+                },
+                "tuned_params_lgb": {
+                    "subsample": 0.8,
+                    "reg_lambda": 1.5,
+                    "reg_alpha": 0.1,
+                    "n_estimators": 300,
+                    "min_child_samples": 20,
+                    "max_depth": 5,
+                    "learning_rate": 0.01,
+                    "colsample_bytree": 0.9
+                },
+                "per_class": {
+                    "SELL": {
+                        "precision": 42.7,
+                        "recall": 59.2,
+                        "f1": 49.6,
+                        "support": 331
+                    },
+                    "HOLD": {
+                        "precision": 76.1,
+                        "recall": 46.3,
+                        "f1": 57.6,
+                        "support": 782
+                    },
+                    "BUY": {
+                        "precision": 35.2,
+                        "recall": 62.0,
+                        "f1": 44.9,
+                        "support": 234
+                    }
+                }
+            },
+            "status": "staging"
         }
     ]
 }

@@ -5,10 +5,14 @@ import { fmtVol, fmt } from '../../utils/formatters';
 export default function MarketStatsBar({ summary }) {
     if (!summary) return null;
 
-    const total = (summary.advancing || 0) + (summary.declining || 0) + (summary.unchanged || 0);
-    const upPct = total ? Math.round((summary.advancing / total) * 100) : 0;
-    const downPct = total ? Math.round((summary.declining / total) * 100) : 0;
-    const flatPct = total ? Math.round((summary.unchanged / total) * 100) : 0;
+    const advancing = summary.advancing || summary.advancers || 0;
+    const declining = summary.declining || summary.decliners || 0;
+    const unchanged = summary.unchanged || 0;
+    const total = advancing + declining + unchanged;
+
+    const upPct = total ? Math.round((advancing / total) * 100) : 0;
+    const downPct = total ? Math.round((declining / total) * 100) : 0;
+    const flatPct = total ? Math.round((unchanged / total) * 100) : 0;
 
     return (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -92,15 +96,23 @@ export default function MarketStatsBar({ summary }) {
                     <div className="flex-1 space-y-1 sm:space-y-1.5">
                         <BreadthItem 
                             label="Advances" 
-                            count={summary.advancing} 
+                            count={advancing} 
                             pct={upPct} 
                             color="text-bullish" 
                             bg="bg-bullish/10"
                             icon={<ArrowUp className="w-2 sm:w-2.5 h-2 sm:h-2.5" />}
                         />
                         <BreadthItem 
+                            label="Not Changed" 
+                            count={unchanged} 
+                            pct={flatPct} 
+                            color="text-text-muted" 
+                            bg="bg-white/5"
+                            icon={<Minus className="w-2 sm:w-2.5 h-2 sm:h-2.5" />}
+                        />
+                        <BreadthItem 
                             label="Declines" 
-                            count={summary.declining} 
+                            count={declining} 
                             pct={downPct} 
                             color="text-bearish" 
                             bg="bg-bearish/10"

@@ -5,7 +5,6 @@ import SignalPage from './pages/SignalPage';
 import LiveMarketPage from './pages/LiveMarketPage';
 import HistoryPage from './pages/HistoryPage';
 import ScreenerPage from './pages/ScreenerPage';
-import MarketSentimentPage from './pages/MarketSentimentPage';
 import Toast from './components/ui/Toast';
 import { ToastProvider } from './contexts/ToastContext';
 import { MarketProvider } from './hooks/useMarketSocket.jsx';
@@ -28,8 +27,6 @@ function getPageInfoFromUrl() {
         symbol = parts[1] || null;
     } else if (parts[0] === 'screener') {
         page = 'screener';
-    } else if (parts[0] === 'sentiment') {
-        page = 'sentiment';
     }
 
     return { page, symbol };
@@ -39,7 +36,7 @@ export default function App() {
     const [{ page, symbol }, setUrlInfo] = useState(getPageInfoFromUrl());
 
     const navigate = (key, sub = null) => {
-        const paths = { home: '/', live: '/live', dashboard: '/signal', history: '/history', screener: '/screener', sentiment: '/sentiment' };
+        const paths = { home: '/', live: '/live', dashboard: '/signal', history: '/history', screener: '/screener' };
         let fullPath = paths[key] ?? '/';
         if (sub) fullPath += `/${sub}`;
         
@@ -64,15 +61,14 @@ export default function App() {
             <MarketProvider>
                 <div className="min-h-screen bg-background text-text font-sans selection:bg-primary/30 overflow-x-hidden">
                     <Navbar page={page} setPage={navigate} />
-                    <div className="p-4 sm:p-6 md:p-8">
+                    <main className="mx-auto w-full">
                         {/* Pages stay mounted — CSS hide/show preserves state & avoids remount delays */}
                         <div className={page === 'home'      ? '' : 'hidden'}><HomePage setPage={navigate} /></div>
                         <div className={page === 'dashboard' ? '' : 'hidden'}><SignalPage /></div>
                         <div className={page === 'live'      ? '' : 'hidden'}><LiveMarketPage symbol={symbol} /></div>
                         <div className={page === 'history'   ? '' : 'hidden'}><HistoryPage symbol={symbol} /></div>
                         <div className={page === 'screener'  ? '' : 'hidden'}><ScreenerPage /></div>
-                        <div className={page === 'sentiment' ? '' : 'hidden'}><MarketSentimentPage /></div>
-                    </div>
+                    </main>
                 </div>
             </MarketProvider>
         </ToastProvider>

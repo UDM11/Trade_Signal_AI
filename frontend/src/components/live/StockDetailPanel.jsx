@@ -136,7 +136,7 @@ export default function StockDetailPanel({ stock, chartData: initialChartData, c
     const sigColors = getSignalColors(sig);
     
     return (
-        <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 px-2 sm:px-0">
+        <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 px-0 sm:px-0">
             {/* Header bar with detailed stats */}
             <div className="relative p-3 sm:p-5 rounded-xl sm:rounded-2xl overflow-hidden shadow-2xl space-y-3 sm:space-y-4" style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
                 <div className="absolute top-0 left-0 right-0 h-[2px] opacity-60" style={{ background: `linear-gradient(90deg, transparent, ${cc}, transparent)` }} />

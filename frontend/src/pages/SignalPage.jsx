@@ -328,7 +328,7 @@ export default function SignalPage() {
     }
 
     return (
-        <main className="w-full max-w-[1600px] mx-auto p-0 sm:p-8 space-y-4 sm:space-y-12">
+        <main className="w-full max-w-[1600px] mx-auto px-4 sm:px-8 py-4 sm:py-12 space-y-4 sm:space-y-12">
             {/* Elite Dashboard Header */}
             <div className="relative overflow-hidden sm:rounded-xl bg-[#0A121E] border-y sm:border border-white/5 p-3 sm:p-5 shadow-2xl">
                 <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-blue-600/5 to-transparent pointer-events-none" />
@@ -508,7 +508,7 @@ export default function SignalPage() {
 
             {/* Premium Terminal Modal */}
             {selected && (
-                <div className="fixed top-14 sm:top-20 lg:top-24 bottom-0 left-0 right-0 z-[50] bg-[#01050d]/95 backdrop-blur-3xl overflow-y-auto pt-4 sm:pt-6 pb-12 sm:pb-20 px-1.5 sm:px-6 animate-in fade-in slide-in-from-bottom-20 duration-500">
+                <div className="fixed top-14 sm:top-20 lg:top-24 bottom-0 left-0 right-0 z-[50] bg-[#01050d]/95 backdrop-blur-3xl overflow-y-auto pt-4 sm:pt-6 pb-12 sm:pb-20 px-0 sm:px-6 animate-in fade-in slide-in-from-bottom-20 duration-500">
                     <div className="max-w-[1600px] mx-auto">
                         <div className="rounded-3xl sm:rounded-[48px] overflow-hidden border border-white/10 shadow-full bg-[#050d1a]/80">
                             <StockDetailsPage selected={selected} onBack={() => setSelected(null)} />

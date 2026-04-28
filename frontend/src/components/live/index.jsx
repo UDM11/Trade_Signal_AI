@@ -104,7 +104,7 @@ export default function LiveMarket({ initialSymbol }) {
     }
 
     return (
-        <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 pb-20 px-2 sm:px-8">
+        <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 pb-20 px-0 sm:px-8">
             {currentStock ? (
                 <StockDetailPanel 
                     stock={currentStock} 
@@ -115,7 +115,7 @@ export default function LiveMarket({ initialSymbol }) {
                     onSwitch={handleSelect}
                 />
             ) : (
-                <>
+                <div className="px-4 sm:px-0 space-y-4 sm:space-y-6">
                     {/* Top Stats Bar (Requested Premium Design) */}
                     <MarketStatsBar summary={data.summary} />
 
@@ -179,7 +179,7 @@ export default function LiveMarket({ initialSymbol }) {
                             predictions={predictions}
                         />
                     </div>
-                </>
+                </div>
             )}
         </div>
     );

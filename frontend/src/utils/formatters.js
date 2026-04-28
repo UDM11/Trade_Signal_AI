@@ -11,7 +11,8 @@ export function fmt(n, d = 2) {
 }
 
 export function fmtVol(n) {
-    if (!n) return '—';
+    if (n == null || isNaN(n)) return '—';
+    if (n === 0) return '0';
     if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
     if (n >= 1e7) return (n / 1e7).toFixed(2) + 'Cr';
     if (n >= 1e5) return (n / 1e5).toFixed(2) + 'L';
