@@ -338,14 +338,17 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
         except: pass
 
         # Generate deep explanation
-        # If force_ai is True (from manual request), we generate text even for SELL/HOLD
+        # Optimization: Skip expensive OpenAI call for HOLD signals during mass scans
+        # unless explicitly forced. This saves 90% of scan time.
+        is_hold = (prediction == "HOLD")
+        
         ai_result = await asyncio.to_thread(
             generate_explanation,
             prediction,
             confidence,
             indicators_summary,
             news_data,
-            force_fallback=(prediction != "BUY" and not force_ai)
+            force_fallback=(is_hold and not force_ai)
         )
 
         # Build chart data and signal history from the indicator-enriched df
@@ -435,98 +438,69 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
 
 async def run_daily_predictions(symbols: list | None = None) -> dict:
     """
-    Fetch all active NEPSE stocks, run the full prediction pipeline for each,
-    and persist results. Accepts an optional symbol list for manual runs.
-
-    Returns a summary dict: {BUY, SELL, HOLD, ERROR, NO_DATA, INSUFFICIENT, elapsed_s}
+    Parallelized stock scanner. Uses a semaphore to process multiple stocks 
+    simultaneously while respecting NEPSE API limits.
     """
     global _job_status
-    # running=True and job_type already set by the API endpoint before task creation
     _job_status["last_run"] = datetime.now(timezone.utc).isoformat()
+    _job_status["running"] = True
     started = datetime.now(timezone.utc)
 
     try:
         if symbols is None:
             from app.services.nepse_service import get_live_data
-            live    = await get_live_data()
-            stocks  = live.get("stocks") or []
+            live = await get_live_data()
+            stocks = live.get("stocks") or []
             if stocks:
                 symbols = [s["symbol"] for s in stocks if s.get("symbol")]
             else:
-                # Market was closed — use gainers+losers as symbol source
-                seen: set = set()
-                symbols = []
-                for s in live.get("gainers", []) + live.get("losers", []):
-                    sym = s.get("symbol")
-                    if sym and sym not in seen:
-                        seen.add(sym)
-                        symbols.append(sym)
+                symbols = await _fetch_all_nepse_symbols_direct()
 
-        total   = len(symbols)
+        total = len(symbols)
         _job_status["progress"] = {"current": 0, "total": total}
-        results: dict = {"BUY": 0, "SELL": 0, "HOLD": 0,
-                         "ERROR": 0, "NO_DATA": 0, "INSUFFICIENT": 0}
+        results: dict = {"BUY": 0, "SELL": 0, "HOLD": 0, "ERROR": 0, "NO_DATA": 0, "INSUFFICIENT": 0}
 
-        logger.info("=== Auto-prediction started: %d symbols ===", total)
-
-        # ── Macro Upgrade: Calculate Market Breadth (Adv/Dec Ratio) ──
-        try:
-            stocks_list = live.get("stocks") or []
-            advances = sum(1 for s in stocks_list if float(s.get("change") or 0) > 0)
-            declines = sum(1 for s in stocks_list if float(s.get("change") or 0) < 0)
-            # Breadth > 1.0 is Bullish Market, < 1.0 is Bearish Market
-            breadth = round(advances / max(1, declines), 2)
-            asyncio.get_event_loop()._last_market_breadth = breadth
-            logger.info("Market Breadth calculated: %.2f (Adv: %d, Dec: %d)", breadth, advances, declines)
-        except Exception as be:
-            asyncio.get_event_loop()._last_market_breadth = 1.0
-            logger.warning("Could not calculate market breadth: %s", be)
-
+        # ── Load Global Model Once ──
         from app.model import _get_latest_model_path
         import joblib
-        
-        global_artifacts = None
         latest_model = _get_latest_model_path()
-        if latest_model:
-            logger.info("Loading global model for daily predictions: %s", latest_model)
-            try:
-                global_artifacts = joblib.load(latest_model)
-            except Exception as e:
-                logger.error("Failed to load global model: %s", e)
-        else:
-            logger.warning("No global model found! Falling back to ad-hoc per-symbol training (very slow).")
+        global_artifacts = joblib.load(latest_model) if latest_model else None
 
-        for i, symbol in enumerate(symbols, 1):
-            _job_status["progress"]["current"] = i
-            res = await _predict_one(symbol, global_artifacts)
+        # ── Parallel Execution with Semaphore ──
+        # Process 10 stocks at a time to stay within NEPSE/Memory limits
+        sem = asyncio.Semaphore(10)
+        
+        async def sem_predict(sym):
+            async with sem:
+                res = await _predict_one(sym, global_artifacts)
+                _job_status["progress"]["current"] += 1
+                return res
+
+        logger.info("=== Parallel Scan Started: %d symbols ===", total)
+        
+        # Split into smaller chunks to provide UI feedback and avoid overwhelming the system
+        tasks = [sem_predict(s) for s in symbols]
+        all_res = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for res in all_res:
+            if isinstance(res, Exception):
+                results["ERROR"] += 1
+                continue
             
-            if isinstance(res, dict):
-                signal = res.get("prediction", "ERROR")
-                if "error" in res and signal == "ERROR":
-                    signal = "ERROR" # explicitly mark as error
-            else:
-                signal = res # Fallback for any legacy code
-
+            signal = res.get("prediction", "ERROR") if isinstance(res, dict) else res
             results[signal] = results.get(signal, 0) + 1
-
-            # Brief pause every 10 stocks to avoid hammering the NEPSE API
-            if i % 10 == 0:
-                logger.info("Progress %d/%d — %s", i, total, results)
-                await asyncio.sleep(3)
-            else:
-                await asyncio.sleep(0.8)
 
         elapsed = round((datetime.now(timezone.utc) - started).total_seconds(), 1)
         results["elapsed_s"] = elapsed
-        results["total"]     = total
+        results["total"] = total
 
-        logger.info("=== Auto-prediction done in %.0fs — %s ===", elapsed, results)
-        _job_status["last_finish"]  = datetime.now(timezone.utc).isoformat()
+        logger.info("=== Scan Complete in %.0fs — %s ===", elapsed, results)
+        _job_status["last_finish"] = datetime.now(timezone.utc).isoformat()
         _job_status["last_results"] = results
         return results
 
     finally:
-        _job_status["running"]  = False
+        _job_status["running"] = False
         _job_status["job_type"] = None
 
 

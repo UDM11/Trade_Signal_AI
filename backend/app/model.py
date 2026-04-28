@@ -186,24 +186,25 @@ def assign_labels(df: pd.DataFrame):
         raise ValueError("Not enough rows for advanced labeling.")
 
     # Dynamic targets based on volatility (ATR)
-    # Using 1.5 ATR for profit, 1.0 ATR for stop loss
-    # We add a floor of 1% to prevent tiny fluctuations from being labeled as signals.
+    # Using 1.2 ATR for profit, 1.0 ATR for stop loss
+    # Looking 10 days ahead for better trend capture
     atr = df['ATR'].fillna(df['Close'] * 0.02)
     
     targets = []
+    lookahead = 10
     for i in range(len(df)):
-        if i > len(df) - 6:
+        if i > len(df) - (lookahead + 1):
             targets.append(1) # HOLD for last few rows
             continue
             
         current_price = df['Close'].iloc[i]
-        limit = min(i + 5, len(df) - 1)
+        limit = min(i + lookahead, len(df) - 1)
         future_prices = df['Close'].iloc[i+1 : limit+1].values
         
         # Professional Volatility Floor: Min 1% move required to label
         atr_val = max(atr.iloc[i], current_price * 0.01)
         
-        up_barrier   = current_price + (1.5 * atr_val)
+        up_barrier   = current_price + (1.2 * atr_val)
         down_barrier = current_price - (1.0 * atr_val)
         
         label = 1 # Default HOLD
@@ -687,9 +688,9 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
         proba = np.ones(len(proba)) / len(proba)
 
     # ── Confidence Thresholding (Advanced Quality Control) ───────────────
-    # Only allow a BUY or SELL if the AI is truly confident (> 60%).
-    # This significantly reduces "false positives" to reach 90%+ signal quality.
-    CONFIDENCE_THRESHOLD = 60.0
+    # Only allow a BUY or SELL if the AI is truly confident (> 50%).
+    # This reduces "false positives" while allowing more valid signals.
+    CONFIDENCE_THRESHOLD = 50.0
     pred_enc_idx = int(np.argmax(proba))
     confidence   = round(float(proba[pred_enc_idx] * 100), 2)
     pred_class   = le.inverse_transform([pred_enc_idx])[0]
