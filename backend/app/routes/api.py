@@ -72,8 +72,21 @@ def _save_local_history(records: list) -> None:
 def _upsert_local(symbol: str, payload: dict) -> None:
     """Insert or update the prediction record for this symbol in the local JSON store."""
     records = _load_local_history()
-    # Find existing record for this symbol
+    # Find existing record for this symbol to maintain persistent history
     idx = next((i for i, r in enumerate(records) if r.get('stocks', {}).get('symbol') == symbol), None)
+    
+    # Persistent Signal History Logic
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    existing_history = []
+    if idx is not None:
+        existing_history = records[idx].get('signal_history') or []
+    
+    # Append today's signal if not already present
+    if not any(h.get('time') == today_str for h in existing_history):
+        existing_history.append({"time": today_str, "signal": payload['prediction']})
+        if len(existing_history) > 1000:
+            existing_history = existing_history[-1000:]
+
     entry = {
         "id":               str(uuid.uuid4()),
         "prediction":       payload['prediction'],
@@ -90,7 +103,7 @@ def _upsert_local(symbol: str, payload: dict) -> None:
         "model_metrics":    payload.get('model_metrics'),
         "ai_analysis":      payload.get('ai_analysis'),
         "chart_data":       payload.get('chart_data', []),
-        "signal_history":   payload.get('signal_history', []),
+        "signal_history":   existing_history, # Use the merged persistent history
         "backtest_stats":   payload.get('backtest_stats'),
         "created_at":       payload['created_at'],
         "stocks":           {"symbol": symbol},

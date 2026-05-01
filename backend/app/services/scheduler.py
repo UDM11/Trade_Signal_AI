@@ -243,9 +243,27 @@ async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> No
                 except Exception as e:
                     logger.warning("[%s] OHLCV sync failed (skipping): %s", symbol, e)
 
-            # 3. Update Prediction entry
-            existing = supabase.table("predictions").select("id").eq("stock_id", stock_id).execute()
-            if existing.data:
+            # 3. Update Prediction entry & Persistent Signal History
+            # We maintain a permanent history of what the system actually predicted each day
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            
+            # Fetch existing history from predictions table instead of stocks table
+            existing_pred = supabase.table("predictions").select("signal_history").eq("stock_id", stock_id).execute()
+            perm_history = []
+            if existing_pred.data:
+                perm_history = existing_pred.data[0].get("signal_history") or []
+            
+            # Append today's signal (avoiding duplicates for same day)
+            new_entry = {"time": today_str, "signal": payload["prediction"]}
+            if not any(h.get("time") == today_str for h in perm_history):
+                perm_history.append(new_entry)
+                # Keep history manageable but long (e.g., last 1000 signals)
+                if len(perm_history) > 1000:
+                    perm_history = perm_history[-1000:]
+
+            # Update the latest prediction record
+            payload["signal_history"] = perm_history # Override with the real persistent history
+            if existing_pred.data:
                 supabase.table("predictions").update(payload).eq("stock_id", stock_id).execute()
             else:
                 supabase.table("predictions").insert({"stock_id": stock_id, **payload}).execute()
@@ -338,9 +356,9 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
         except: pass
 
         # Generate deep explanation
-        # Optimization: Skip expensive OpenAI call for HOLD signals during mass scans
-        # unless explicitly forced. This saves 90% of scan time.
-        is_hold = (prediction == "HOLD")
+        # Optimization: Only use expensive OpenAI calls for BUY signals.
+        # This saves significant cost and time during market scans.
+        is_buy = (prediction == "BUY")
         
         ai_result = await asyncio.to_thread(
             generate_explanation,
@@ -348,7 +366,7 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
             confidence,
             indicators_summary,
             news_data,
-            force_fallback=(is_hold and not force_ai)
+            force_fallback=(not is_buy and not force_ai)
         )
 
         # Build chart data and signal history from the indicator-enriched df

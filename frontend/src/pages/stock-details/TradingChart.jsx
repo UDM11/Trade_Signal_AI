@@ -6,7 +6,7 @@ import {
 } from "lightweight-charts";
 import { 
     Maximize2, Minimize2, TrendingUp, TrendingDown, Minus, RotateCcw, 
-    Loader2, ChevronDown, Clock, BrainCircuit, Cpu, Crosshair, Target, Shield, X 
+    Loader2, ChevronDown, Clock, BrainCircuit, Cpu, Crosshair, Target, Shield, X, Zap
 } from "lucide-react";
 
 // ─── Indicator math ────────────────────────────────────────────────────────────
@@ -735,41 +735,65 @@ export default function TradingChart({
             S.current.vp.setData([]);
         }
 
-        // ── Signal markers ─────────────────────────────────────────────────────
+        // ── Signal markers (Professional V2) ──────────────────────────────────
         if (markersP.current) { try { markersP.current.setMarkers([]); } catch (e) { void e; } }
-
-        const times   = new Set(filtered.map(d => d.time));
         const markers = [];
 
         if (signalHistory?.length) {
-            let last = null;
+            let lastSignal = null;
             for (const s of signalHistory) {
-                if (!times.has(s.time) || s.signal === last) continue;
-                last = s.signal;
-                markers.push(s.signal === "BUY"
-                    ? { time: s.time, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: "B", size: 1 }
-                    : { time: s.time, position: "aboveBar", color: "#ef5350", shape: "arrowDown", text: "S", size: 1 });
+                // Determine if this is a "Change" (Signal Reversal) or a "Continuance"
+                const isChange = s.signal !== lastSignal;
+                lastSignal = s.signal;
+
+                if (s.signal === "BUY") {
+                    markers.push({
+                        time: s.time,
+                        position: "belowBar",
+                        color: "#10b981", // Emerald
+                        shape: isChange ? "arrowUp" : "circle",
+                        text: isChange ? "BUY" : "",
+                        size: isChange ? 2 : 0.5,
+                    });
+                } else if (s.signal === "SELL") {
+                    markers.push({
+                        time: s.time,
+                        position: "aboveBar",
+                        color: "#f43f5e", // Rose
+                        shape: isChange ? "arrowDown" : "circle",
+                        text: isChange ? "SELL" : "",
+                        size: isChange ? 2 : 0.5,
+                    });
+                } else if (s.signal === "HOLD") {
+                    markers.push({
+                        time: s.time,
+                        position: "aboveBar",
+                        color: "rgba(245,158,11,0.2)", // Subtle Amber
+                        shape: "circle",
+                        size: 0.2,
+                    });
+                }
             }
         }
 
+        // Highlight the LATEST AI prediction with a special badge
         if (prediction && filtered.length) {
             const lastBar = filtered[filtered.length - 1];
             const ei = markers.findIndex(m => m.time === lastBar.time);
             
-            // Extract a short reason from explanation if available (first 30 chars)
-            const reason = explanation ? (explanation.length > 35 ? explanation.substring(0, 32) + "..." : explanation) : null;
             const signalText = prediction === "BUY" ? "AI BUY" : prediction === "SELL" ? "AI SELL" : "HOLD";
-            const markerText = reason ? `${signalText}: ${reason}` : signalText;
-
-            const lm = prediction === "BUY"  ? { time: lastBar.time, position: "belowBar", color: "#26a69a", shape: "arrowUp",   text: markerText,  size: 2 }
-                     : prediction === "SELL" ? { time: lastBar.time, position: "aboveBar", color: "#ef5350", shape: "arrowDown", text: markerText, size: 2 }
-                     :                         { time: lastBar.time, position: "aboveBar", color: "#eab308", shape: "circle",    text: "HOLD",      size: 1 };
+            const lm = prediction === "BUY"  ? { time: lastBar.time, position: "belowBar", color: "#10b981", shape: "arrowUp",   text: signalText,  size: 2.5 }
+                     : prediction === "SELL" ? { time: lastBar.time, position: "aboveBar", color: "#f43f5e", shape: "arrowDown", text: signalText, size: 2.5 }
+                     :                         { time: lastBar.time, position: "aboveBar", color: "#f59e0b", shape: "circle",    text: "AI HOLD",    size: 1 };
+            
             if (ei >= 0) markers[ei] = lm; else markers.push(lm);
         }
 
         if (markers.length) {
             const plugin = createSeriesMarkers(chartType === "line" ? S.current.lineChart : S.current.candle);
-            plugin.setMarkers(markers);
+            // Sort by time to ensure lightweight-charts doesn't complain
+            const sortedMarkers = markers.sort((a, b) => (a.time > b.time ? 1 : -1));
+            plugin.setMarkers(sortedMarkers);
             markersP.current = plugin;
         }
 
@@ -1044,7 +1068,8 @@ export default function TradingChart({
                 <div className="hidden sm:flex items-center justify-between px-6 py-4 shrink-0 bg-[#050d1a] border-t border-white/5">
                     <div className="flex items-center gap-8">
                         {idealEntry && <LevelItem label="Target Entry" value={fmt(idealEntry)} color="#94a3b8" icon={Crosshair} />}
-                        {targetPrice && <LevelItem label="Profit Target" value={fmt(targetPrice)} sub={targetPct ? `${targetPct}%` : null} color={isSell ? "#ef4444" : "#10b981"} icon={Target} />}
+                        {targetPrice && <LevelItem label="Base Target" value={fmt(targetPrice)} sub={targetPct ? `${targetPct}%` : null} color={isSell ? "#ef4444" : "#10b981"} icon={Target} />}
+                        {target2 && <LevelItem label="Deep Target" value={fmt(target2)} sub={target2Pct ? `${target2Pct}%` : null} color={isSell ? "#f87171" : "#34d399"} icon={Zap} />}
                         {stopLoss && <LevelItem label="Risk Limit" value={fmt(stopLoss)} sub={stopLossPct ? `${stopLossPct}%` : null} color={isSell ? "#10b981" : "#ef4444"} icon={Shield} />}
                     </div>
 

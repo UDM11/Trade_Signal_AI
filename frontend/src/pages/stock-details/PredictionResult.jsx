@@ -4,7 +4,7 @@ import {
     Target, Shield, CalendarClock, Activity, Zap, BarChart2,
     AlertTriangle, CheckCircle, Info, ChevronRight, Percent,
     Crosshair, ArrowRightLeft, MoveUpRight, AlertOctagon,
-    GitBranch, LogOut, TrendingUpDown,
+    GitBranch, LogOut, TrendingUpDown, AlertCircle
 } from 'lucide-react';
 
 // ── Config ─────────────────────────────────────────────────────────────────────
@@ -170,6 +170,7 @@ export default function PredictionResult({ result, isSidebar }) {
         ideal_entry, entry_zone_low, entry_zone_high, entry_condition,
         target2, target2_pct, trailing_stop, trailing_stop_pct,
         exit_condition, risk_note, market_structure,
+        ai_analysis
     } = result;
 
     const cfg = SIG[prediction] || SIG.HOLD;
@@ -293,21 +294,103 @@ export default function PredictionResult({ result, isSidebar }) {
                 </div>
 
                 {/* Probability Distribution */}
-                {!isSidebar && (
-                    <div className="p-6 flex flex-col gap-6">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Scenario Forecast</p>
-                        {all_proba && (
-                            <div className="space-y-3">
-                                <ProbaBar label="BULL CASE" pct={all_proba.BUY ?? 0} color="#10b981" isActive={prediction === 'BUY'} />
-                                <ProbaBar label="NEUTRAL" pct={all_proba.HOLD ?? 0} color="#eab308" isActive={prediction === 'HOLD'} />
-                                <ProbaBar label="BEAR CASE" pct={all_proba.SELL ?? 0} color="#ef4444" isActive={prediction === 'SELL'} />
+                <div className={`p-3 sm:p-4 lg:p-6 flex flex-col gap-3 sm:gap-6 ${isSidebar ? 'border-t lg:border-t-0' : ''} border-white/5`}>
+                    <div className="flex items-center justify-between">
+                        <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-slate-500">Scenario Forecast</p>
+                        <Activity className="w-3 h-3 text-slate-600" />
+                    </div>
+                    {all_proba && (
+                        <div className="space-y-2 sm:space-y-3">
+                            <ProbaBar label="BULLISH" pct={all_proba.BUY ?? 0} color="#10b981" isActive={prediction === 'BUY'} />
+                            <ProbaBar label="NEUTRAL" pct={all_proba.HOLD ?? 0} color="#eab308" isActive={prediction === 'HOLD'} />
+                            <ProbaBar label="BEARISH" pct={all_proba.SELL ?? 0} color="#ef4444" isActive={prediction === 'SELL'} />
+                        </div>
+                    )}
+                    <div className="mt-auto p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-blue-500/5 border border-blue-500/10">
+                        <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                            "The ensemble model favors a <span className="text-white font-bold">{prediction}</span> setup with {(confidence || 0).toFixed(0)}% conviction. Monitor volume for confirmation."
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* ── Model Integrity & Institutional Analysis ──────────────────── */}
+            <div className="p-3 sm:p-5 border-t border-white/5 space-y-6">
+                {/* 1. Model Integrity (Trust Metrics) */}
+                {model_metrics && (
+                    <div className="p-4 sm:p-5 rounded-2xl sm:rounded-3xl bg-white/[0.02] border border-white/5 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Shield className="w-3.5 h-3.5 text-blue-400" />
+                                <h3 className="text-[9px] font-black uppercase tracking-widest text-white">Model Integrity</h3>
+                            </div>
+                            <span className="px-2 py-0.5 rounded text-[7px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-tighter">Verified</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <span className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">Predictive Accuracy</span>
+                                <p className="text-lg font-black text-white tabular-nums">{(model_metrics.accuracy || 0).toFixed(1)}%</p>
+                            </div>
+                            <div className="space-y-1">
+                                <span className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">F1-Confidence</span>
+                                <p className="text-lg font-black text-white tabular-nums">{(model_metrics.f1_macro || 0).toFixed(2)}</p>
+                            </div>
+                        </div>
+                        <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500 transition-all duration-1000" style={{ width: `${model_metrics.accuracy}%` }} />
+                        </div>
+                    </div>
+                )}
+
+                {/* 2. Institutional Analysis (DNA Synthesis) */}
+                {ai_analysis && (
+                    <div className="p-4 sm:p-5 rounded-2xl sm:rounded-3xl bg-white/[0.02] border border-white/5 space-y-5">
+                        <div className="flex items-center gap-2">
+                            <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                            <h3 className="text-[9px] font-black uppercase tracking-widest text-white">Institutional Suite</h3>
+                        </div>
+
+                        {/* Multi-Timeframe Alignment */}
+                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-black/20 border border-white/5">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Weekly Confluence</span>
+                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border ${
+                                ai_analysis.weekly_confluence?.includes('Bullish') ? 'bg-buy/10 text-buy border-buy/20' : 
+                                ai_analysis.weekly_confluence?.includes('Bearish') ? 'bg-sell/10 text-sell border-sell/20' : 
+                                'bg-white/5 text-slate-400 border-white/10'
+                            }`}>
+                                {ai_analysis.weekly_confluence || 'Neutral Alignment'}
+                            </span>
+                        </div>
+
+                        {/* Fibonacci Matrix */}
+                        {ai_analysis.fibonacci && (
+                            <div className="space-y-2.5">
+                                <p className="text-[8px] font-bold text-slate-600 uppercase tracking-widest px-1">Fibonacci Levels</p>
+                                <div className="grid grid-cols-5 gap-1">
+                                    {['0.236', '0.382', '0.5', '0.618', '0.786'].map(lvl => (
+                                        <div key={lvl} className="flex flex-col items-center p-1.5 rounded-lg bg-white/[0.03] border border-white/5">
+                                            <span className="text-[7px] font-bold text-slate-500 mb-0.5">{lvl}</span>
+                                            <span className="text-[8px] font-black text-slate-200 tabular-nums">
+                                                {fmt(ai_analysis.fibonacci[lvl])}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         )}
-                        <div className="mt-auto p-4 rounded-2xl bg-blue-500/5 border border-blue-500/10">
-                            <p className="text-[10px] text-slate-400 leading-relaxed italic">
-                                "The ensemble model is currently favoring a <span className="text-white font-bold">{prediction}</span> setup with high conviction. Avoid entry if price breaks above stop levels."
-                            </p>
-                        </div>
+
+                        {/* Risk Note */}
+                        {ai_analysis.risk_note && (
+                            <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/10">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <AlertCircle className="w-3 h-3 text-amber-500" />
+                                    <span className="text-[8px] font-black text-amber-500 uppercase tracking-widest">Risk Note</span>
+                                </div>
+                                <p className="text-[10px] text-slate-400 leading-relaxed italic">
+                                    "{ai_analysis.risk_note}"
+                                </p>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>

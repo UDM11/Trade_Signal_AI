@@ -1,8 +1,4 @@
-# ── Trade Signal AI — Single full-stack app ────────────────────────────────────
-# Run from the PROJECT ROOT:  fly deploy
-# Secrets: fly secrets set SUPABASE_URL=... SUPABASE_KEY=... OPENAI_API_KEY=... ALLOWED_ORIGINS=https://trade-signal-ai.fly.dev
-
-app            = 'trade-signal-ai'
+app = 'trade-signal-ai'
 primary_region = 'bom'
 
 [build]
@@ -18,7 +14,7 @@ primary_region = 'bom'
   force_https          = true
   auto_stop_machines   = true
   auto_start_machines  = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[http_service.checks]]
     grace_period = "300s"

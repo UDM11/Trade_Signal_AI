@@ -3,9 +3,13 @@ import {
     TrendingUp, TrendingDown, Activity, Crosshair, Wallet,
     BarChart2, Trophy, AlertTriangle, Target, Shield,
     Percent, Zap, ChevronUp, ChevronDown, Layers, Receipt,
+    History, ArrowUpRight, Scale
 } from 'lucide-react';
 
 const STARTING = 100_000;
+
+const fmt = (n, d = 2) => 
+    n != null ? Number(n).toLocaleString('en-IN', { minimumFractionDigits: d, maximumFractionDigits: d }) : '—';
 
 // ── Animated counter ───────────────────────────────────────────────────────────
 function AnimNum({ value, prefix = '', suffix = '', decimals = 2, style }) {
@@ -27,14 +31,10 @@ function AnimNum({ value, prefix = '', suffix = '', decimals = 2, style }) {
 }
 
 // ── Equity curve SVG ───────────────────────────────────────────────────────────
-function EquityCurve({ returnPct, trades, winRate, realCurve }) {
+function EquityCurve({ returnPct, realCurve }) {
     const pts = 60;
     const curve = React.useMemo(() => {
-        // Use real trade-by-trade equity when backend provides it
-        if (realCurve && realCurve.length > 1) {
-            return realCurve;
-        }
-        // Fallback: simulated smooth curve (used only when real data unavailable)
+        if (realCurve && realCurve.length > 1) return realCurve;
         const arr = [STARTING];
         for (let i = 1; i < pts; i++) {
             const prog  = i / (pts - 1);
@@ -66,51 +66,13 @@ function EquityCurve({ returnPct, trades, winRate, realCurve }) {
                     <stop offset="0%"   stopColor={c} stopOpacity="0.3" />
                     <stop offset="100%" stopColor={c} stopOpacity="0.02" />
                 </linearGradient>
-                <filter id="line-glow">
-                    <feGaussianBlur stdDeviation="1.5" result="blur" />
-                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                </filter>
             </defs>
-            {/* Zero line */}
             <line x1="0" y1={ty(STARTING).toFixed(1)} x2={W} y2={ty(STARTING).toFixed(1)}
                 stroke="rgba(255,255,255,0.08)" strokeWidth="1" strokeDasharray="4,4" />
-            {/* Fill */}
             <path d={fill} fill="url(#eq-up)" />
-            {/* Line */}
-            <path d={line} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round"
-                strokeLinejoin="round" filter="url(#line-glow)" />
-            {/* End dot */}
+            <path d={line} fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             <circle cx={tx(n - 1)} cy={ty(curve[n - 1])} r="3.5" fill={c} opacity="0.9" />
         </svg>
-    );
-}
-
-// ── Win/loss segmented bar ─────────────────────────────────────────────────────
-function WinLossBar({ winRate, totalTrades }) {
-    const [w, setW] = useState(0);
-    useEffect(() => { const t = setTimeout(() => setW(winRate), 200); return () => clearTimeout(t); }, [winRate]);
-    const wins   = Math.round(totalTrades * winRate / 100);
-    const losses = totalTrades - wins;
-    return (
-        <div className="space-y-2">
-            <div className="flex justify-between text-[11px] font-bold">
-                <span style={{ color: '#10b981' }}>
-                    {wins} Wins ({winRate.toFixed(1)}%)
-                </span>
-                <span style={{ color: '#ef4444' }}>
-                    {losses} Losses ({(100 - winRate).toFixed(1)}%)
-                </span>
-            </div>
-            <div className="h-2.5 w-full rounded-full overflow-hidden flex gap-px"
-                style={{ background: 'rgba(239,68,68,0.2)' }}>
-                <div className="h-full rounded-full transition-all duration-1000 ease-out"
-                    style={{ width: `${w}%`, background: 'linear-gradient(90deg,#10b981,#34d399)', boxShadow: '0 0 6px rgba(16,185,129,0.4)' }} />
-            </div>
-            <div className="flex justify-between text-[10px]" style={{ color: '#475569' }}>
-                <span>Breakeven at 50%</span>
-                <span>{winRate >= 50 ? '✓ Above breakeven' : '✗ Below breakeven'}</span>
-            </div>
-        </div>
     );
 }
 
@@ -129,22 +91,19 @@ function ratingOf(returnPct, winRate, sharpe) {
 // ── Stat cell ──────────────────────────────────────────────────────────────────
 function StatCell({ icon: Icon, label, value, sub, color = '#94a3b8', accent, animated, prefix = '', suffix = '', decimals = 2 }) {
     return (
-        <div className="flex flex-col gap-2 rounded-xl p-4 border relative overflow-hidden"
+        <div className="flex flex-col gap-1.5 rounded-xl p-3 border relative overflow-hidden"
             style={{ background: accent ? `${color}09` : 'rgba(255,255,255,0.02)', borderColor: accent ? `${color}30` : 'rgba(255,255,255,0.06)' }}>
-            {accent && <div className="absolute top-0 left-0 right-0 h-px" style={{ background: `linear-gradient(90deg, transparent, ${color}60, transparent)` }} />}
             <div className="flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>{label}</span>
-                <div className="p-1.5 rounded-lg" style={{ background: `${color}15` }}>
-                    <Icon className="w-3.5 h-3.5" style={{ color }} />
-                </div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{label}</span>
+                <Icon className="w-3 h-3 text-slate-600" />
             </div>
             <div>
                 {animated
                     ? <AnimNum value={typeof value === 'number' ? value : 0} prefix={prefix} suffix={suffix} decimals={decimals}
-                        style={{ fontSize: 22, fontWeight: 900, color, fontFamily: 'inherit', letterSpacing: '-0.02em' }} />
-                    : <p className="text-xl font-black" style={{ color }}>{value}</p>
+                        style={{ fontSize: 16, fontWeight: 900, color, fontFamily: 'inherit', letterSpacing: '-0.02em' }} />
+                    : <p className="text-base font-black" style={{ color }}>{value}</p>
                 }
-                {sub && <p className="text-[11px] mt-0.5" style={{ color: '#475569' }}>{sub}</p>}
+                {sub && <p className="text-[9px] mt-0.5 font-bold text-slate-600">{sub}</p>}
             </div>
         </div>
     );
@@ -152,102 +111,129 @@ function StatCell({ icon: Icon, label, value, sub, color = '#94a3b8', accent, an
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 export default function BacktestResults({ stats, isSidebar }) {
+    const [tab, setTab] = useState('metrics');
+
     if (!stats) return null;
 
     const {
         return_pct, win_rate, total_trades,
         final_capital, initial_capital = STARTING,
-        max_drawdown, sharpe_ratio,
-        calmar_ratio, profit_factor, commission_paid,
-        equity_curve,
+        max_drawdown, sharpe_ratio, sortino_ratio,
+        calmar_ratio, profit_factor, expectancy,
+        bench_return, trades = [], equity_curve,
     } = stats;
 
-    // No meaningful backtest data — show empty state
     const isEmpty = !total_trades || (return_pct === 0 && win_rate === 0 && total_trades === 0);
     if (isEmpty) return (
-        <div className="h-full rounded-2xl border border-dashed border-white/10 p-8 flex flex-col items-center justify-center gap-3 text-center"
-            style={{ background: 'rgba(8,15,26,0.4)' }}>
+        <div className="h-full rounded-2xl border border-dashed border-white/10 p-8 flex flex-col items-center justify-center gap-3 text-center bg-black/20">
             <BarChart2 className="w-8 h-8 text-slate-700" />
             <p className="text-xs font-black text-slate-600 uppercase tracking-widest">Insufficient Backtest Data</p>
-            <p className="text-[11px] text-slate-700 max-w-xs leading-relaxed">
-                Not enough historical trades to generate a meaningful backtest for this asset.
-            </p>
         </div>
     );
 
-    const isProfit    = return_pct >= 0;
-    const pnl         = final_capital - initial_capital;
-    const pnlAbs      = Math.abs(pnl);
-    const wins        = Math.round(total_trades * win_rate / 100);
-    const losses      = total_trades - wins;
-    const profitFactor = profit_factor ?? (losses > 0 && wins > 0 ? (wins / losses) * 1.1 : 0);
-
+    const isProfit = return_pct >= 0;
     const rating = ratingOf(return_pct, win_rate, sharpe_ratio ?? 0);
-    const RatingIcon = rating.icon;
 
     return (
-        <div className={`h-full flex flex-col rounded-2xl overflow-hidden border border-white/5 shadow-2xl backdrop-blur-xl`}
-            style={{ background: 'rgba(8, 15, 26, 0.6)' }}>
-
-            {/* ── Header ──────────────────────────────────────────────────── */}
-            <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                        <BarChart2 className="w-4 h-4 text-blue-400" />
-                    </div>
-                    <div>
-                        <h2 className="text-xs font-black text-white uppercase tracking-widest">Backtest</h2>
-                        <p className="text-[10px] text-slate-500 font-bold">Historical Simulation</p>
-                    </div>
-                </div>
-
-                <div className={`px-3 py-1.5 rounded-xl text-[10px] font-black tracking-widest border ${isProfit ? 'bg-buy/10 text-buy border-buy/20' : 'bg-sell/10 text-sell border-sell/20'}`}>
-                    {isProfit ? '+' : ''}{return_pct.toFixed(2)}%
-                </div>
+        <div className="h-full flex flex-col rounded-2xl overflow-hidden border border-white/5 bg-[#0a121e]/80 backdrop-blur-xl">
+            
+            {/* Header Tabs */}
+            <div className="flex p-1 gap-1 border-b border-white/5 bg-white/[0.02]">
+                <button onClick={() => setTab('metrics')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'metrics' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+                    <BarChart2 className="w-3.5 h-3.5" /> Metrics
+                </button>
+                <button onClick={() => setTab('history')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${tab === 'history' ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-white'}`}>
+                    <History className="w-3.5 h-3.5" /> History
+                </button>
             </div>
 
-            <div className="p-6 space-y-5">
-                {/* ── Equity Curve ──────────────────────────────────────────── */}
-                <div className="rounded-2xl border border-white/5 p-4 bg-black/20 overflow-hidden">
-                    <div className="flex items-center justify-between mb-3">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Equity Path</p>
-                        <span className="text-[10px] font-black text-white">Rs.{final_capital.toLocaleString()}</span>
-                    </div>
-                    <EquityCurve returnPct={return_pct} trades={total_trades} winRate={win_rate} realCurve={equity_curve} />
-                </div>
+            <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
+                {tab === 'metrics' ? (
+                    <div className="p-4 space-y-4">
+                        {/* Rating Card */}
+                        <div className="flex items-center gap-4 rounded-2xl p-4 border"
+                            style={{ background: rating.bg, borderColor: rating.border }}>
+                            <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0 text-2xl font-black"
+                                style={{ background: `${rating.color}20`, border: `1px solid ${rating.color}40`, color: rating.color }}>
+                                {rating.grade}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: rating.color }}>{rating.label} Performance</p>
+                                <p className="text-[10px] font-bold text-slate-400 mt-0.5 leading-relaxed truncate">
+                                    Based on {total_trades} sample trades
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-xs font-black text-white">{isProfit ? '+' : ''}{return_pct.toFixed(2)}%</p>
+                                <p className="text-[9px] font-bold text-slate-500">Net Return</p>
+                            </div>
+                        </div>
 
-                {/* ── High Density Grid ─────────────────────────────────────── */}
-                <div className="grid grid-cols-2 gap-3">
-                    <StatCell label="Net P&L" value={return_pct} prefix={isProfit ? '+' : ''} suffix="%" color={isProfit ? '#10b981' : '#ef4444'} accent animated icon={TrendingUp} />
-                    <StatCell label="Win Rate" value={win_rate} suffix="%" color={win_rate >= 50 ? '#10b981' : '#ef4444'} accent animated icon={Crosshair} />
-                    <StatCell label="Drawdown" value={max_drawdown || 0} prefix="-" suffix="%" color="#ef4444" icon={Shield} animated />
-                    <StatCell label="Sharpe" value={sharpe_ratio || 0} color="#3b82f6" icon={Zap} animated />
-                </div>
+                        {/* Equity Chart */}
+                        <div className="rounded-2xl border border-white/5 p-4 bg-black/20">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-[9px] font-black uppercase tracking-widest text-slate-500">Equity Curve</p>
+                                <span className="text-[10px] font-black text-emerald-400">Rs.{fmt(final_capital, 0)}</span>
+                            </div>
+                            <EquityCurve returnPct={return_pct} realCurve={equity_curve} />
+                        </div>
 
-                {/* ── Win/Loss Bar ──────────────────────────────────────────── */}
-                <div className="rounded-2xl p-4 border border-white/5 bg-black/10">
-                    <WinLossBar winRate={win_rate} totalTrades={total_trades} />
-                </div>
-
-                {/* ── Rating ────────────────────────────────────────────────── */}
-                <div className="flex items-center gap-4 rounded-2xl p-4 border"
-                    style={{ background: rating.bg, borderColor: rating.border }}>
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-xl font-black"
-                        style={{ background: `${rating.color}20`, border: `1px solid ${rating.color}40`, color: rating.color }}>
-                        {rating.grade}
+                        {/* Professional Grid */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <StatCell label="Win Rate" value={win_rate} suffix="%" color={win_rate >= 50 ? '#10b981' : '#ef4444'} accent animated icon={Crosshair} />
+                            <StatCell label="Profit Factor" value={profit_factor} suffix="x" color={profit_factor >= 1.5 ? '#10b981' : '#eab308'} accent animated icon={Scale} />
+                            <StatCell label="Expectancy" value={expectancy} prefix="Rs." color={expectancy > 0 ? '#10b981' : '#ef4444'} sub="Avg Profit/Trade" icon={Target} animated />
+                            <StatCell label="Max Drawdown" value={max_drawdown} prefix="-" suffix="%" color="#ef4444" icon={Shield} animated />
+                            <StatCell label="Sharpe Ratio" value={sharpe_ratio} color="#3b82f6" icon={Zap} animated />
+                            <StatCell label="Benchmark" value={bench_return} suffix="%" color={return_pct > bench_return ? '#10b981' : '#94a3b8'} sub="Buy & Hold" icon={Activity} animated />
+                        </div>
                     </div>
-                    <div className="flex-1">
-                        <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: rating.color }}>
-                            {rating.label} Score
-                        </p>
-                        <p className="text-[10px] font-bold text-slate-400 mt-1 line-clamp-2 leading-relaxed">
-                            {rating.label === 'Excellent' && 'Institutional grade performance with high risk-adjusted efficiency.'}
-                            {rating.label === 'Good'      && 'Consistent edge detected. Strategy is statistically viable.'}
-                            {rating.label === 'Average'   && 'Marginal edge. Consider adding confirmation filters.'}
-                            {rating.label === 'Poor'      && 'Strategy lacks consistent edge. Higher volatility detected.'}
-                        </p>
+                ) : (
+                    <div className="divide-y divide-white/5">
+                        {trades.length > 0 ? (
+                            trades.slice().reverse().map((t, i) => (
+                                <div key={i} className="p-4 hover:bg-white/[0.02] transition-all">
+                                    <div className="flex items-start justify-between mb-2">
+                                        <div>
+                                            <p className="text-xs font-black text-white tracking-tighter uppercase">{t.entry_date} → {t.exit_date}</p>
+                                            <p className="text-[9px] font-bold text-slate-500 mt-0.5">Rs.{fmt(t.entry_price)} to Rs.{fmt(t.exit_price)}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className={`text-xs font-black tabular-nums ${t.pnl_rs >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                {t.pnl_rs >= 0 ? '+' : ''}Rs.{fmt(t.pnl_rs, 0)}
+                                            </p>
+                                            <p className={`text-[10px] font-black tabular-nums opacity-60 ${t.pnl_rs >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                {t.pnl_pct >= 0 ? '+' : ''}{t.pnl_pct.toFixed(2)}%
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="h-1 w-full rounded-full bg-white/5 overflow-hidden">
+                                        <div className={`h-full rounded-full transition-all duration-700 ${t.pnl_rs >= 0 ? 'bg-emerald-400' : 'bg-red-400'}`}
+                                            style={{ width: `${Math.min(Math.abs(t.pnl_pct) * 2, 100)}%` }} />
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="p-12 text-center">
+                                <History className="w-8 h-8 text-slate-700 mx-auto mb-3" />
+                                <p className="text-[10px] font-black text-slate-600 uppercase tracking-widest">No Trade Logs</p>
+                            </div>
+                        )}
                     </div>
+                )}
+            </div>
+            
+            {/* Footer Institutional Disclaimer */}
+            <div className="p-4 border-t border-white/5 bg-black/40">
+                <div className="flex items-center gap-2 mb-2">
+                    <Shield className="w-3 h-3 text-blue-400" />
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-[0.15em]">Institutional Simulation</span>
                 </div>
+                <p className="text-[8px] text-slate-600 leading-relaxed font-bold">
+                    Backtest accounts for NEPSE broker fees (0.4%) and DP fees (Rs. 25). Past performance is not indicative of future results.
+                </p>
             </div>
         </div>
     );

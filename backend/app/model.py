@@ -707,14 +707,16 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
         label = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(cls, str(cls))
         all_proba[label] = round(float(proba[i]) * 100, 1)
 
+    # ── Professional Backtest Window ─────────────────────────────────────
+    # Previously, this was limited to the last 10 days, resulting in 0 trades.
+    # We now target a minimum 60-day window for statistical significance.
     test_start  = artifacts.get('test_start_idx', int(len(df) * 0.8))
-    # test_start_idx was computed on the warmup-skipped df (rows 26+).
-    # Applying it to the full df without offset causes training rows to appear
-    # in the backtest — look-ahead bias inflating every backtest metric.
-    # Offset by WARMUP so the backtest only sees true out-of-sample rows.
     WARMUP      = 26
-    actual_start = (WARMUP + test_start) if len(df) > WARMUP * 2 else test_start
-    actual_start = min(actual_start, max(0, len(df) - 10))
+    
+    # Calculate a window that covers the test set but ensures at least 60 days if possible
+    MIN_WINDOW  = 60
+    actual_start = min(test_start + WARMUP, max(0, len(df) - MIN_WINDOW))
+    
     test_df     = df.iloc[actual_start:].copy()
     backtest    = run_backtest(model, le, scaler, features, test_df)
     all_signals = predict_all_signals(df, artifacts)
@@ -728,15 +730,16 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
     - NEPSE costs: 0.4% Broker Fee + Rs. 25 DP Fee (Institutional Standard)
     - Starting capital: Rs. 100,000
     - Reports: return %, win rate, max drawdown, Sharpe, Calmar, Profit Factor,
-               total trades, commission paid.
+               total trades, commission paid, benchmark return, expectancy.
     """
     COMMISSION = 0.004
     DP_FEE     = 25.0    # Standard NEPSE DP Fee per transaction
     INITIAL    = 100_000.0
 
-    if len(df) < 10:
+    if len(df) < 15:
         return None
 
+    # ── Prepare Features ──
     for f in features:
         if f not in df.columns:
             df[f] = 0.0
@@ -748,11 +751,14 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
     except Exception:
         return None
 
+    # ── Simulation State ──
     closes           = df['Close'].values
+    dates            = df['Date'].values
     capital          = INITIAL
     shares           = 0.0
     entry_price      = 0.0
-    entry_capital    = 0.0   # capital spent to open position (before buy commission)
+    entry_date       = None
+    entry_capital    = INITIAL 
     trades_won       = 0
     trades_total     = 0
     peak_capital     = INITIAL
@@ -761,12 +767,21 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
     total_commission = 0.0
     gross_profit     = 0.0
     gross_loss       = 0.0
+    trade_log        = []
 
+    # ── Benchmark (Buy & Hold) ──
+    bench_shares = INITIAL / closes[0]
+    bench_final  = bench_shares * closes[-1]
+    bench_return = ((bench_final - INITIAL) / INITIAL) * 100
+
+    # ── Run Simulation ──
     for i, signal in enumerate(preds):
         price = closes[i]
+        date_str = dates[i].strftime("%Y-%m-%d") if hasattr(dates[i], "strftime") else str(dates[i])
 
         if signal == 2 and shares == 0:          # BUY
-            entry_capital     = capital           # record full capital before commission
+            entry_capital     = capital
+            entry_date        = date_str
             cost              = (capital * COMMISSION) + DP_FEE
             total_commission += cost
             capital          -= cost
@@ -779,70 +794,95 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
             cost              = (gross * COMMISSION) + DP_FEE
             total_commission += cost
             capital           = gross - cost
-            # PnL = net sell proceeds minus original capital committed to buy.
-            pnl               = capital - entry_capital
+            
+            pnl = capital - entry_capital
+            pnl_pct = (pnl / entry_capital) * 100
+            
             if pnl > 0:
                 gross_profit += pnl
                 trades_won   += 1
             else:
                 gross_loss   += abs(pnl)
+            
+            trade_log.append({
+                "entry_date":  entry_date,
+                "exit_date":   date_str,
+                "entry_price": round(entry_price, 2),
+                "exit_price":  round(price, 2),
+                "pnl_rs":      round(pnl, 2),
+                "pnl_pct":     round(pnl_pct, 2)
+            })
+            
             shares        = 0.0
             trades_total += 1
 
         current_equity = capital + shares * price
         equity_curve.append(round(current_equity, 2))
+        
         if current_equity > peak_capital:
             peak_capital = current_equity
+        
         dd = (peak_capital - current_equity) / peak_capital * 100
         if dd > max_drawdown:
             max_drawdown = dd
 
     # Liquidate remaining position at last price
     if shares > 0:
+        date_str          = dates[-1].strftime("%Y-%m-%d") if hasattr(dates[-1], "strftime") else str(dates[-1])
         gross             = shares * closes[-1]
         cost              = (gross * COMMISSION) + DP_FEE
         total_commission += cost
         capital           = gross - cost
         pnl               = capital - entry_capital
+        pnl_pct           = (pnl / entry_capital) * 100
+        
         if pnl > 0:
             gross_profit += pnl
             trades_won   += 1
         else:
             gross_loss   += abs(pnl)
+            
+        trade_log.append({
+            "entry_date":  entry_date,
+            "exit_date":   date_str,
+            "entry_price": round(entry_price, 2),
+            "exit_price":  round(closes[-1], 2),
+            "pnl_rs":      round(pnl, 2),
+            "pnl_pct":     round(pnl_pct, 2)
+        })
         trades_total += 1
 
+    # ── Metrics Calculation ──
     win_rate   = (trades_won / trades_total * 100) if trades_total > 0 else 0.0
     return_pct = ((capital - INITIAL) / INITIAL) * 100
+    
+    # Expectancy: (Win% * AvgWin) - (Loss% * AvgLoss)
+    avg_win  = (gross_profit / trades_won) if trades_won > 0 else 0
+    avg_loss = (gross_loss / (trades_total - trades_won)) if (trades_total - trades_won) > 0 else 0
+    expectancy = ((win_rate/100) * avg_win) - ((1 - win_rate/100) * avg_loss)
 
-    # Sharpe ratio (annualized, daily data assumed)
-    if len(equity_curve) > 2:
+    # Sharpe ratio (annualized)
+    sharpe = 0.0
+    sortino = 0.0
+    if len(equity_curve) > 5:
         eq            = np.array(equity_curve)
-        daily_returns = np.diff(eq) / eq[:-1]
-        sharpe        = (daily_returns.mean() / (daily_returns.std() + 1e-9)) * np.sqrt(252)
-    else:
-        sharpe = 0.0
+        daily_returns = np.diff(eq) / (eq[:-1] + 1e-9)
+        std = daily_returns.std()
+        if std > 0:
+            sharpe = (daily_returns.mean() / std) * np.sqrt(252)
+        
+        downside = daily_returns[daily_returns < 0]
+        if len(downside) > 0 and downside.std() > 0:
+            sortino = (daily_returns.mean() / downside.std()) * np.sqrt(252)
 
-    # Sortino Ratio (measures return vs downside volatility only)
-    if len(equity_curve) > 2:
-        eq            = np.array(equity_curve)
-        daily_returns = np.diff(eq) / eq[:-1]
-        downside      = daily_returns[daily_returns < 0]
-        sortino       = (daily_returns.mean() / (downside.std() + 1e-9)) * np.sqrt(252) if len(downside) > 0 else 0.0
-    else:
-        sortino = 0.0
-
-    # Calmar ratio: annualized return / max drawdown (higher = better risk-adj.)
-    calmar = (return_pct / max_drawdown) if max_drawdown > 0 else 0.0
-
-    # Profit Factor: gross profit / gross loss (>1 = profitable overall)
-    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (float('inf') if gross_profit > 0 else 0.0)
-    if profit_factor == float('inf'):
-        profit_factor = 99.0
+    calmar = (return_pct / max_drawdown) if max_drawdown > 0 else (return_pct if return_pct > 0 else 0.0)
+    profit_factor = (gross_profit / gross_loss) if gross_loss > 0 else (99.0 if gross_profit > 0 else 0.0)
 
     return {
         'initial_capital': INITIAL,
         'final_capital':   round(capital, 2),
         'return_pct':      round(return_pct, 2),
+        'bench_return':    round(bench_return, 2),
         'win_rate':        round(win_rate, 2),
         'total_trades':    trades_total,
         'max_drawdown':    round(max_drawdown, 2),
@@ -850,6 +890,8 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
         'sortino_ratio':   round(sortino, 2),
         'calmar_ratio':    round(calmar, 2),
         'profit_factor':   round(profit_factor, 2),
+        'expectancy':      round(expectancy, 2),
         'commission_paid': round(total_commission, 2),
+        'trades':          trade_log,
         'equity_curve':    equity_curve
     }

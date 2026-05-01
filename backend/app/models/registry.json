@@ -1,5 +1,5 @@
 {
-    "active_model": "model_xgb_20260427_135750.pkl",
+    "active_model": "model_xgb_20260501_191624.pkl",
     "models": [
         {
             "filename": "model_xgb_20260427_135750.pkl",
@@ -126,6 +126,112 @@
                 }
             },
             "status": "staging"
+        },
+        {
+            "filename": "model_xgb_20260429_183806.pkl",
+            "date": "2026-04-29T18:38:07.821309",
+            "accuracy": 62.24,
+            "metrics": {
+                "accuracy": 62.24,
+                "f1_macro": 62.28,
+                "threshold_used": 85.431,
+                "features_used": 40,
+                "tuned_params_xgb": {
+                    "subsample": 0.9,
+                    "reg_lambda": 1.0,
+                    "reg_alpha": 0.1,
+                    "n_estimators": 300,
+                    "min_child_weight": 5,
+                    "max_depth": 5,
+                    "learning_rate": 0.08,
+                    "gamma": 0.05,
+                    "colsample_bytree": 0.9
+                },
+                "tuned_params_lgb": {
+                    "subsample": 0.8,
+                    "reg_lambda": 1.5,
+                    "reg_alpha": 0.1,
+                    "n_estimators": 500,
+                    "min_child_samples": 10,
+                    "max_depth": 4,
+                    "learning_rate": 0.08,
+                    "colsample_bytree": 0.7
+                },
+                "per_class": {
+                    "SELL": {
+                        "precision": 64.2,
+                        "recall": 56.9,
+                        "f1": 60.3,
+                        "support": 603
+                    },
+                    "HOLD": {
+                        "precision": 59.5,
+                        "recall": 67.4,
+                        "f1": 63.2,
+                        "support": 516
+                    },
+                    "BUY": {
+                        "precision": 63.3,
+                        "recall": 63.3,
+                        "f1": 63.3,
+                        "support": 531
+                    }
+                }
+            },
+            "status": "active"
+        },
+        {
+            "filename": "model_xgb_20260501_191624.pkl",
+            "date": "2026-05-01T19:16:24.928350",
+            "accuracy": 57.8,
+            "metrics": {
+                "accuracy": 57.8,
+                "f1_macro": 57.72,
+                "threshold_used": 24.134,
+                "features_used": 40,
+                "tuned_params_xgb": {
+                    "subsample": 0.8,
+                    "reg_lambda": 0.5,
+                    "reg_alpha": 0,
+                    "n_estimators": 200,
+                    "min_child_weight": 3,
+                    "max_depth": 6,
+                    "learning_rate": 0.01,
+                    "gamma": 0.05,
+                    "colsample_bytree": 0.7
+                },
+                "tuned_params_lgb": {
+                    "subsample": 0.8,
+                    "reg_lambda": 0.5,
+                    "reg_alpha": 0,
+                    "n_estimators": 200,
+                    "min_child_samples": 10,
+                    "max_depth": 6,
+                    "learning_rate": 0.01,
+                    "colsample_bytree": 0.8
+                },
+                "per_class": {
+                    "SELL": {
+                        "precision": 56.5,
+                        "recall": 62.2,
+                        "f1": 59.2,
+                        "support": 500
+                    },
+                    "HOLD": {
+                        "precision": 56.6,
+                        "recall": 56.7,
+                        "f1": 56.7,
+                        "support": 439
+                    },
+                    "BUY": {
+                        "precision": 60.5,
+                        "recall": 54.3,
+                        "f1": 57.3,
+                        "support": 497
+                    }
+                }
+            },
+            "status": "active"
         }
     ]
 }

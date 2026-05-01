@@ -84,6 +84,34 @@ function StatCell({ icon: Icon, label, value, sub, valueClass = 'text-white' }) 
     );
 }
 
+// ── Signal Probability Strip ───────────────────────────────────────────────────
+export function SignalProbaStrip({ all_proba, prediction, className = "" }) {
+    if (!all_proba) return null;
+    
+    const b = Number(all_proba.BUY  || 0);
+    const h = Number(all_proba.HOLD || 0);
+    const s = Number(all_proba.SELL || 0);
+    const total = (b + h + s) || 1;
+
+    return (
+        <div className={`space-y-1.5 ${className}`}>
+            <div className="flex items-center justify-between px-0.5">
+                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Scenario Probability</span>
+                <div className="flex gap-2">
+                    <span className="text-[8px] font-bold text-buy">{b.toFixed(0)}% B</span>
+                    <span className="text-[8px] font-bold text-hold">{h.toFixed(0)}% H</span>
+                    <span className="text-[8px] font-bold text-sell">{s.toFixed(0)}% S</span>
+                </div>
+            </div>
+            <div className="h-1.5 w-full flex rounded-full overflow-hidden bg-white/5 border border-white/5">
+                <div className="h-full transition-all duration-1000 bg-buy shadow-[0_0_10px_rgba(16,185,129,0.4)]" style={{ width: `${(b/total)*100}%` }} />
+                <div className="h-full transition-all duration-1000 bg-hold opacity-80" style={{ width: `${(h/total)*100}%` }} />
+                <div className="h-full transition-all duration-1000 bg-sell shadow-[0_0_10px_rgba(239,68,68,0.4)]" style={{ width: `${(s/total)*100}%` }} />
+            </div>
+        </div>
+    );
+}
+
 // ── History Card ───────────────────────────────────────────────────────────────
 export function HistoryCard({ record, onClick }) {
     const sig    = SIGNAL[record.prediction] || SIGNAL.HOLD;
@@ -170,6 +198,14 @@ export function HistoryCard({ record, onClick }) {
 
                     {/* Right: Sparkline + Signal badge */}
                     <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        {record.backtest_stats && (
+                            <div className="hidden sm:flex flex-col items-end px-2 py-1 rounded-lg bg-white/5 border border-white/5">
+                                <span className="text-[7px] font-black text-slate-500 uppercase tracking-widest">Backtest</span>
+                                <span className={`text-[10px] font-black tabular-nums ${record.backtest_stats.return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                    {record.backtest_stats.return_pct >= 0 ? '+' : ''}{record.backtest_stats.return_pct.toFixed(1)}%
+                                </span>
+                            </div>
+                        )}
                         <div className="hidden md:block opacity-70 group-hover:opacity-100 transition-opacity">
                             <MiniSparkline chartData={record.chart_data} signal={record.prediction} />
                         </div>
@@ -226,6 +262,10 @@ export function HistoryCard({ record, onClick }) {
                         }
                     />
                 </div>
+
+                {/* Row 3: Signal Probability Strip */}
+                <SignalProbaStrip all_proba={record.all_proba} prediction={record.prediction} className="mt-1" />
+
             </div>
 
             {/* Bottom: Full-width confidence bar */}

@@ -133,6 +133,8 @@ function FilterPanel({ filters, setFilters, counts, onReset }) {
     );
 }
 
+import { SignalProbaStrip } from '../components/history/HistoryComponents';
+
 // ── Heatmap Block ─────────────────────────────────────────────────────────────
 function HeatmapBlock({ r, onClick }) {
     const sig = SIG[r.prediction] || SIG.HOLD;
@@ -141,7 +143,7 @@ function HeatmapBlock({ r, onClick }) {
 
     return (
         <button onClick={() => onClick(r)}
-            className="group relative rounded-xl sm:rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-3.5 text-center aspect-square sm:aspect-auto sm:h-32"
+            className="group relative rounded-xl sm:rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-3.5 text-center aspect-square sm:aspect-auto sm:h-36"
             style={{
                 background: 'rgba(8, 15, 26, 0.4)',
                 border: `1px solid ${sig.borderC}`,
@@ -151,19 +153,13 @@ function HeatmapBlock({ r, onClick }) {
             
             <div className="relative z-10 w-full">
                 <p className="text-sm sm:text-base font-black text-white group-hover:scale-105 transition-transform duration-300 uppercase">{sym}</p>
-                <div className="flex items-center justify-center gap-1 mt-1">
+                <div className="flex items-center justify-center gap-1 mt-1 mb-2">
                     <sig.Icon className={`w-2.5 h-2.5 ${sig.color}`} />
                     <p className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest ${sig.color}`}>{r.prediction}</p>
                 </div>
                 
-                <div className="mt-3 w-full bg-white/5 h-1 rounded-full overflow-hidden border border-white/5">
-                    <div className={`h-full transition-all duration-1000 ${
-                        r.prediction === 'BUY' ? 'bg-buy shadow-[0_0_8px_rgba(16,185,129,0.8)]' : 
-                        r.prediction === 'SELL' ? 'bg-sell shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 
-                        'bg-hold shadow-[0_0_8px_rgba(245,158,11,0.8)]'
-                    }`} style={{ width: `${conf}%` }} />
-                </div>
-                <p className="text-[7px] sm:text-[9px] font-bold text-slate-500 mt-1.5 tracking-widest tabular-nums">{conf.toFixed(0)}% CONF</p>
+                <SignalProbaStrip all_proba={r.all_proba} prediction={r.prediction} />
+                <p className="text-[7px] sm:text-[9px] font-bold text-slate-500 mt-2 tracking-widest tabular-nums">{conf.toFixed(0)}% CONF</p>
             </div>
         </button>
     );
@@ -199,12 +195,12 @@ function TableRow({ r, rank, onSelect }) {
                 </div>
             </td>
             <td className="px-3 sm:px-5 py-4 sm:py-5 hidden lg:table-cell">
-                <div className="flex items-center gap-4">
-                    <div className="hidden xl:block w-24 h-1.5 rounded-full bg-white/5 border border-white/5 overflow-hidden">
-                        <div className={`h-full ${r.prediction === 'BUY' ? 'bg-buy' : r.prediction === 'SELL' ? 'bg-sell' : 'bg-hold'} transition-all duration-1000`} 
-                             style={{ width: `${conf}%` }} />
+                <div className="flex flex-col gap-1.5 min-w-[120px]">
+                    <div className="flex items-center justify-between">
+                        <span className={`text-xs font-black tabular-nums ${sig.color}`}>{conf.toFixed(1)}%</span>
+                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Ensemble Confidence</span>
                     </div>
-                    <span className={`text-xs font-black tabular-nums ${sig.color}`}>{conf.toFixed(1)}%</span>
+                    <SignalProbaStrip all_proba={r.all_proba} prediction={r.prediction} />
                 </div>
             </td>
             <td className="px-1.5 sm:px-5 py-3 sm:py-5">

@@ -2,16 +2,21 @@ import React, { useState } from 'react';
 import {
     ArrowLeft, BarChart3, Brain, Activity, Loader2,
     TrendingUp, TrendingDown, Minus, Target, Shield, Crosshair,
+    LayoutGrid, Zap, Sparkles, History,
 } from 'lucide-react';
 import BacktestResults from './BacktestResults';
 import PredictionResult from './PredictionResult';
 import TradingChart from './TradingChart';
+import IndicatorMatrix from './IndicatorMatrix';
+import { SignalProbaStrip } from '../../components/history/HistoryComponents';
 import { invalidate } from '../../cache/predictionsCache';
 
 const MOBILE_TABS = [
-    { id: 'chart',    label: 'Chart',    Icon: BarChart3 },
-    { id: 'analysis', label: 'Analysis', Icon: Brain     },
-    { id: 'backtest', label: 'Backtest', Icon: Activity  },
+    { id: 'chart',    label: 'Chart',      icon: Activity },
+    { id: 'overview', label: 'Overview',   icon: LayoutGrid },
+    { id: 'dna',      label: 'DNA Matrix', icon: Zap },
+    { id: 'signals',  label: 'Signal AI',  icon: Sparkles },
+    { id: 'backtest', label: 'Backtest',   icon: History },
 ];
 
 const fmt = (n, d = 2) =>
@@ -51,41 +56,68 @@ function ExecutionOverview({ result, sigColor }) {
 
     return (
         <div className="space-y-4 p-5">
-            {/* Entry zone bar */}
-            {entry_zone_low && entry_zone_high && (
-                <div className="rounded-2xl p-4 border border-white/6" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    <div className="flex justify-between text-[10px] text-slate-500 font-bold mb-3">
-                        <span>Zone Low  Rs.{fmt(entry_zone_low)}</span>
-                        <span>Zone High  Rs.{fmt(entry_zone_high)}</span>
+            {/* Trade Architecture Dashboard */}
+            <div className="grid grid-cols-1 gap-4">
+                {/* 1. Entry Intelligence */}
+                {entry_zone_low && entry_zone_high && (
+                    <div className="rounded-3xl p-5 border border-white/6 bg-white/[0.02] relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-3 opacity-10">
+                            <Target className="w-12 h-12" />
+                        </div>
+                        <div className="flex justify-between items-center mb-4">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Ideal Entry Range</h4>
+                            <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20">Optimal Zone</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-white font-black mb-2 px-1">
+                            <span>Rs.{fmt(entry_zone_low)}</span>
+                            <span>Rs.{fmt(entry_zone_high)}</span>
+                        </div>
+                        <div className="relative h-2 rounded-full bg-white/5 border border-white/5 overflow-hidden">
+                            <div className="absolute inset-y-0 bg-gradient-to-r from-emerald-500/40 via-emerald-500/10 to-emerald-500/40 w-full" />
+                            <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full border-2 border-white z-10 shadow-[0_0_15px_rgba(255,255,255,0.5)]"
+                                style={{ left: `${markerPct}%`, background: sigColor }} />
+                        </div>
+                        <p className="text-center text-xs font-black mt-4 tracking-tight" style={{ color: sigColor }}>
+                            Current Bias: Rs.{fmt(ideal_entry ?? close)}
+                        </p>
                     </div>
-                    <div className="relative h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                        <div className="absolute inset-0 rounded-full opacity-25"
-                            style={{ background: 'linear-gradient(90deg,#ef4444,#eab308,#10b981)' }} />
-                        <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full border-2 border-white z-10 shadow-lg"
-                            style={{ left: `${markerPct}%`, background: sigColor }} />
-                    </div>
-                    <p className="text-center text-[10px] font-black mt-2.5" style={{ color: sigColor }}>
-                        Ideal Entry  Rs.{fmt(ideal_entry ?? close)}
-                    </p>
-                </div>
-            )}
+                )}
 
-            {/* Trade levels */}
-            <div className="rounded-2xl border border-white/6 overflow-hidden" style={{ background: 'rgba(255,255,255,0.015)' }}>
-                {rows.map(({ label, price, pct, color }, i) => (
-                    <div key={label} className={`flex items-center gap-3 px-4 py-3 ${i < rows.length - 1 ? 'border-b border-white/5' : ''}`}>
-                        <div className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
-                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider flex-1">{label}</span>
-                        <div className="text-right">
-                            <p className="text-sm font-black text-white tabular-nums">Rs.{fmt(price)}</p>
-                            {pct != null && (
-                                <p className="text-[11px] font-bold tabular-nums" style={{ color: pct >= 0 ? '#10b981' : '#ef4444' }}>
-                                    {pct >= 0 ? '+' : ''}{Number(pct).toFixed(2)}%
-                                </p>
-                            )}
+                {/* 2. Target Matrix (T1 & T2) */}
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-2xl p-4 border border-white/6 bg-buy/5 space-y-1">
+                        <div className="flex items-center gap-1.5 opacity-60 mb-2">
+                            <TrendingUp className="w-3 h-3 text-buy" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Target 1 (Base)</span>
+                        </div>
+                        <p className="text-xl font-black text-white tabular-nums leading-none">Rs.{fmt(result.target_price)}</p>
+                        <p className="text-[11px] font-black text-buy">+{result.target_pct}%</p>
+                    </div>
+                    <div className="rounded-2xl p-4 border border-white/6 bg-emerald-500/5 space-y-1">
+                        <div className="flex items-center gap-1.5 opacity-60 mb-2">
+                            <Target className="w-3 h-3 text-emerald-400" />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Target 2 (Deep)</span>
+                        </div>
+                        <p className="text-xl font-black text-white tabular-nums leading-none">Rs.{fmt(result.target2)}</p>
+                        <p className="text-[11px] font-black text-emerald-400">+{result.target2_pct}%</p>
+                    </div>
+                </div>
+
+                {/* 3. Stop Protection */}
+                <div className="rounded-2xl p-4 border border-rose-500/20 bg-rose-500/5 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                            <Shield className="w-4 h-4 text-rose-500" />
+                        </div>
+                        <div>
+                            <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block">Hard Stop Loss</span>
+                            <p className="text-base font-black text-white tabular-nums">Rs.{fmt(result.stop_loss)}</p>
                         </div>
                     </div>
-                ))}
+                    <div className="text-right">
+                        <span className="text-[9px] font-black text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20">-{Math.abs(result.stop_loss_pct).toFixed(1)}%</span>
+                    </div>
+                </div>
             </div>
 
             {/* R:R + Days */}
@@ -103,6 +135,13 @@ function ExecutionOverview({ result, sigColor }) {
                     </p>
                 </div>
             </div>
+
+            {/* Probability Strip */}
+            {result.all_proba && (
+                <div className="pt-2">
+                    <SignalProbaStrip all_proba={result.all_proba} prediction={result.prediction} />
+                </div>
+            )}
 
             {/* Indicators row */}
             <div className="grid grid-cols-3 gap-2">
@@ -186,6 +225,32 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
 
     React.useEffect(() => {
         if (!initialSelected?.symbol) return;
+        
+        // Deep data extraction from ai_analysis if available
+        const ai = initialSelected.ai_analysis || {};
+        const flattened = {
+            ...initialSelected,
+            prediction:      initialSelected.prediction || initialSelected.signal,
+            confidence:      initialSelected.confidence ?? initialSelected.confidence_score,
+            ideal_entry:     ai.ideal_entry || initialSelected.ideal_entry,
+            entry_zone_low:  ai.entry_zone_low || initialSelected.entry_zone_low,
+            entry_zone_high: ai.entry_zone_high || initialSelected.entry_zone_high,
+            target_price:    ai.target_price || initialSelected.target_price,
+            target_pct:      ai.target_pct || initialSelected.target_pct,
+            target2:         ai.target2 || initialSelected.target2 || initialSelected.target2_price,
+            target2_pct:     ai.target2_pct || initialSelected.target2_pct,
+            stop_loss:       ai.stop_loss || initialSelected.stop_loss,
+            stop_loss_pct:   ai.stop_loss_pct || initialSelected.stop_loss_pct,
+            trailing_stop:   ai.trailing_stop || initialSelected.trailing_stop,
+            risk_reward:     ai.risk_reward || initialSelected.risk_reward,
+            estimated_days:  ai.estimated_days || initialSelected.estimated_days,
+            entry_condition: ai.entry_condition || initialSelected.entry_condition,
+            exit_condition:  ai.exit_condition || initialSelected.exit_condition,
+            risk_note:       ai.risk_note || initialSelected.risk_note,
+            market_structure:ai.market_structure || initialSelected.market_structure,
+        };
+        setSelected(flattened);
+
         const sync = async () => {
             setSyncing(true);
             try {
@@ -203,7 +268,7 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
             }
         };
         sync();
-    }, [initialSelected?.symbol]);
+    }, [initialSelected]);
 
     const handleDeepAnalysis = async () => {
         if (analyzing) return;
@@ -262,6 +327,7 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
     const sigBg     = isBuy ? 'rgba(34,197,94,0.12)'  : isSell ? 'rgba(239,68,68,0.12)'  : 'rgba(234,179,8,0.12)';
     const sigBorder = isBuy ? 'rgba(34,197,94,0.28)'  : isSell ? 'rgba(239,68,68,0.28)'  : 'rgba(234,179,8,0.28)';
     const SigIcon   = isBuy ? TrendingUp : isSell ? TrendingDown : Minus;
+    const rrColor   = selected.risk_reward >= 2 ? '#10b981' : selected.risk_reward >= 1 ? '#eab308' : '#ef4444';
 
     const chartProps = {
         data:          selected.chartData || [],
@@ -325,22 +391,17 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
                 </div>
 
                 {/* Right: key stat pills */}
-                <div className="hidden md:flex items-center gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2">
                     {selected.confidence != null && (
-                        <QuickStat label="Confidence" value={`${Number(selected.confidence).toFixed(1)}%`} color={sigColor} />
+                        <QuickStat label="Confidence" value={`${Number(selected.confidence).toFixed(0)}%`} color={sigColor} />
                     )}
-                    {selected.risk_reward != null && (
-                        <QuickStat label="R:R Ratio" value={`1 : ${Number(selected.risk_reward).toFixed(1)}`}
-                            color={selected.risk_reward >= 1.5 ? '#10b981' : selected.risk_reward >= 0.8 ? '#eab308' : '#ef4444'} />
-                    )}
-                    {selected.estimated_days != null && (
-                        <QuickStat label="Est. Hold" value={`${selected.estimated_days}D`} color="#60a5fa" />
-                    )}
-                    {selected.target_price != null && (
-                        <QuickStat label="T1 Target" value={`Rs.${fmt(selected.target_price)}`} color={isSell ? '#ef4444' : '#10b981'} />
-                    )}
+                    <div className="hidden xs:block">
+                        {selected.risk_reward != null && (
+                            <QuickStat label="R:R" value={`1:${Number(selected.risk_reward).toFixed(1)}`} color={rrColor} />
+                        )}
+                    </div>
                     {selected.stop_loss != null && (
-                        <QuickStat label="Stop Loss" value={`Rs.${fmt(selected.stop_loss)}`} color="#ef4444" />
+                        <QuickStat label="Stop" value={`Rs.${fmt(selected.stop_loss, 0)}`} color="#ef4444" />
                     )}
                 </div>
             </div>
@@ -355,7 +416,12 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
                     {/* Sidebar tab nav */}
                     <div className="flex items-center gap-1 p-2 border-b border-white/5 shrink-0"
                         style={{ background: 'rgba(255,255,255,0.02)' }}>
-                        {[{ id: 'overview', label: 'Overview' }, { id: 'analysis', label: 'AI Analysis' }, { id: 'backtest', label: 'Backtest' }].map(({ id, label }) => (
+                        {[
+                            { id: 'overview', label: 'Overview' }, 
+                            { id: 'dna',      label: 'DNA Matrix' }, 
+                            { id: 'analysis', label: 'AI Analysis' }, 
+                            { id: 'backtest', label: 'Backtest' }
+                        ].map(({ id, label }) => (
                             <button key={id} onClick={() => setSidebarTab(id)}
                                 className="flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all"
                                 style={{
@@ -372,6 +438,9 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
                     <div className="flex-1 overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
                         {sidebarTab === 'overview' && (
                             <ExecutionOverview result={selected} sigColor={sigColor} />
+                        )}
+                        {sidebarTab === 'dna' && (
+                            <IndicatorMatrix indicators={selected.indicators} />
                         )}
                         {sidebarTab === 'analysis' && (
                             <div className="p-0">
@@ -396,29 +465,35 @@ export default function StockDetailsPage({ selected: initialSelected, onBack }) 
             {/* ── Mobile: tab nav + panels ─────────────────────────────────────── */}
             <div className="lg:hidden space-y-3">
                 <div className="flex gap-1 p-0.5 rounded-xl sm:rounded-2xl border border-white/8" style={{ background: 'rgba(255,255,255,0.02)' }}>
-                    {MOBILE_TABS.map(({ id, label }) => (
+                    {MOBILE_TABS.map(({ id, label, icon: Icon }) => (
                         <button key={id} onClick={() => setMobileTab(id)}
-                            className="flex-1 py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest transition-all"
+                            className="flex-1 flex flex-col items-center gap-1 py-2 sm:py-2.5 rounded-lg sm:rounded-xl text-[8px] sm:text-[10px] font-black uppercase tracking-widest transition-all"
                             style={{
                                 background: mobileTab === id ? 'rgba(255,255,255,0.08)' : 'transparent',
                                 color:      mobileTab === id ? '#fff' : '#475569',
+                                border:     mobileTab === id ? '1px solid rgba(255,255,255,0.08)' : '1px solid transparent',
                             }}>
-                            {label}
+                            <Icon className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                            <span className="hidden xs:inline">{label}</span>
                         </button>
                     ))}
                 </div>
 
-                {mobileTab === 'chart' && (
-                    <div className="rounded-2xl overflow-hidden border border-white/6" style={{ height: 450 }}>
-                        <TradingChart {...chartProps} />
-                    </div>
-                )}
-                {mobileTab === 'analysis' && <PredictionResult result={selected} isSidebar />}
-                {mobileTab === 'backtest' && (
-                    <div className="p-1">
-                        <BacktestResults stats={backtestData} isSidebar />
-                    </div>
-                )}
+                <div className="min-h-[400px]">
+                    {mobileTab === 'chart'    && (
+                        <div className="rounded-2xl overflow-hidden border border-white/8" style={{ height: 500 }}>
+                            <TradingChart {...chartProps} />
+                        </div>
+                    )}
+                    {mobileTab === 'overview' && <ExecutionOverview result={selected} sigColor={sigColor} />}
+                    {mobileTab === 'dna'      && <IndicatorMatrix indicators={selected.indicators} />}
+                    {mobileTab === 'signals'  && <PredictionResult result={selected} isSidebar />}
+                    {mobileTab === 'backtest' && (
+                        <div className="p-0">
+                            <BacktestResults stats={backtestData} isSidebar />
+                        </div>
+                    )}
+                </div>
             </div>
 
         </div>
