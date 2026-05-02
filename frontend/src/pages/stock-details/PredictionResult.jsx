@@ -117,6 +117,71 @@ function TradeRow({ icon: Icon, label, price, pct, color, note, highlight }) {
     );
 }
 
+// ── Position Calculator ───────────────────────────────────────────────────────
+function PositionCalculator({ entry, stopLoss, currentPrice }) {
+    const [capital, setCapital] = useState(500000);
+    const [riskPct, setRiskPct] = useState(2);
+    
+    const price = entry || currentPrice || 0;
+    const sl = stopLoss || 0;
+    const riskAmount = (capital * riskPct) / 100;
+    const riskPerUnit = Math.abs(price - sl);
+    const units = riskPerUnit > 0 ? Math.floor(riskAmount / riskPerUnit) : 0;
+    const totalInvestment = units * price;
+    
+    return (
+        <div className="mt-6 p-4 rounded-2xl bg-white/[0.03] border border-white/5">
+            <div className="flex items-center gap-2 mb-4">
+                <Crosshair className="w-4 h-4 text-blue-400" />
+                <h4 className="text-xs font-black text-white uppercase tracking-widest">Institutional Position Sizing</h4>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Total Capital (Rs.)</label>
+                    <input 
+                        type="number" 
+                        value={capital} 
+                        onChange={(e) => setCapital(Number(e.target.value))}
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-black text-white focus:outline-none focus:border-blue-500/50"
+                    />
+                </div>
+                <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Risk per Trade (%)</label>
+                    <input 
+                        type="number" 
+                        value={riskPct} 
+                        onChange={(e) => setRiskPct(Number(e.target.value))}
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm font-black text-white focus:outline-none focus:border-blue-500/50"
+                    />
+                </div>
+            </div>
+            
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-between">
+                <div>
+                    <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-0.5">Recommended Quantity</div>
+                    <div className="text-2xl font-black text-white tabular-nums">{units} <span className="text-sm font-bold text-slate-400 uppercase">Units</span></div>
+                </div>
+                <div className="text-right">
+                    <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-0.5">Total Risk</div>
+                    <div className="text-sm font-black text-rose-400 tabular-nums">Rs. {fmt(riskAmount)}</div>
+                </div>
+            </div>
+            
+            <div className="mt-3 flex items-center justify-between px-1">
+                <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Total Investment</span>
+                    <span className="text-xs font-black text-white">Rs. {fmt(totalInvestment)}</span>
+                </div>
+                <div className="flex flex-col text-right">
+                    <span className="text-[9px] font-bold text-slate-500 uppercase">Risk per Unit</span>
+                    <span className="text-xs font-black text-white">Rs. {fmt(riskPerUnit)}</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 // ── Entry Zone bar ─────────────────────────────────────────────────────────────
 function EntryZoneBar({ low, ideal, high, color }) {
     if (!low || !high || !ideal) return null;
@@ -391,6 +456,13 @@ export default function PredictionResult({ result, isSidebar }) {
                                 </p>
                             </div>
                         )}
+
+                        {/* Position Sizing Calculator (Trader Utility) */}
+                        <PositionCalculator 
+                            entry={ideal_entry} 
+                            stopLoss={stop_loss} 
+                            currentPrice={ideal_entry} 
+                        />
                     </div>
                 )}
             </div>
@@ -405,6 +477,38 @@ export default function PredictionResult({ result, isSidebar }) {
                 </div>
 
                 <div className="space-y-4">
+                    {/* Market Regime, SHAP & Confluence (Advanced V2) */}
+                    {(result.regime || result.explanation || model_metrics?.confluence || model_metrics?.pattern_similarity) && (
+                        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-4">
+                            {result.regime && (
+                                <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10 flex flex-col gap-1">
+                                    <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest">Market Regime</span>
+                                    <span className="text-sm font-black text-white">{result.regime} Detected</span>
+                                </div>
+                            )}
+                            {model_metrics?.confluence && (
+                                <div className={`p-3 rounded-xl ${model_metrics.confluence.aligned ? 'bg-emerald-500/5 border-emerald-500/10' : 'bg-amber-500/5 border-amber-500/10'} border flex flex-col gap-1`}>
+                                    <span className={`text-[8px] font-black ${model_metrics.confluence.aligned ? 'text-emerald-400' : 'text-amber-400'} uppercase tracking-widest`}>Weekly Confluence</span>
+                                    <span className="text-sm font-black text-white">
+                                        {model_metrics.confluence.aligned ? 'ALIGNED' : 'DIVERGED'}
+                                    </span>
+                                </div>
+                            )}
+                            {model_metrics?.pattern_similarity && (
+                                <div className="p-3 rounded-xl bg-purple-500/5 border border-purple-500/10 flex flex-col gap-1">
+                                    <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest">Historical Analogue</span>
+                                    <span className="text-sm font-black text-white">{model_metrics.pattern_similarity.similarity}% Match</span>
+                                </div>
+                            )}
+                            {result.explanation && (
+                                <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/10 flex flex-col gap-1 sm:col-span-1">
+                                    <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest">AI Rationale (SHAP)</span>
+                                    <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{result.explanation}</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* Market Structure Header */}
                     {market_structure && (
                         <div className="flex gap-4 group bg-white/[0.02] p-3 rounded-xl border border-white/5 mb-2">

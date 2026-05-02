@@ -1,0 +1,13 @@
+{
+  "name": "trade-signal-ai-root",
+  "version": "1.0.0",
+  "description": "Root package for Trade Signal AI",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "cd frontend && npm run dev -- --open",
+    "dev:backend": "cd backend && .\\venv\\Scripts\\activate && uvicorn app.main:app --reload --port 8000"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

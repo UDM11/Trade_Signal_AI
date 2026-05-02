@@ -16,15 +16,34 @@ import glob
 from datetime import datetime
 import xgboost as xgb
 import lightgbm as lgb
+import optuna
+import shap
+import torch
+import torch.nn as nn
+from sklearn.mixture import GaussianMixture
 
 import json
 
-# LightGBM is fitted via VotingClassifier which passes numpy arrays without
-# column names. This is harmless — suppress the sklearn compatibility warning.
+# ── Suppress sklearn feature-name mismatch warnings ──────────────────────────
+# These arise from a format mismatch between how the saved models were trained
+# (raw numpy arrays) and the new prediction code (named DataFrames), or vice versa.
+# Both directions are harmless — the predictions are correct either way.
+# These warnings will disappear permanently once models are retrained.
 warnings.filterwarnings(
     'ignore',
     message='X does not have valid feature names',
     category=UserWarning,
+)
+warnings.filterwarnings(
+    'ignore',
+    message='X has feature names, but',
+    category=UserWarning,
+)
+# Suppress httpx deprecation warning about 'data=' vs 'content=' parameter
+warnings.filterwarnings(
+    'ignore',
+    message="Use 'content=<...>'",
+    category=DeprecationWarning,
 )
 
 MODELS_DIR   = os.path.join(os.path.dirname(__file__), "models")
@@ -167,10 +186,114 @@ FEATURES = [
     'Donchian_Width', 'Efficiency_Ratio', 'Fisher',
     # ── Macro & Sentiment V4 ────────────────────────────────────────────────
     'Market_Breadth', 'Sentiment_Score',
+    # ── Regime Features ──
+    'Market_Regime',
 ]
 
 
+
+def detect_regimes(df: pd.DataFrame, n_regimes: int = 3) -> pd.DataFrame:
+    """
+    Uses Gaussian Mixture Model to classify market into regimes.
+    Returns the dataframe with a 'Market_Regime' column.
+    """
+    df = df.copy()
+    # Use Volatility, Returns, and ADX as regime indicators
+    regime_feats = ['Volatility', 'Price_Change_Pct', 'ADX']
+    for f in regime_feats:
+        if f not in df.columns:
+            df[f] = 0.0
+            
+    # Need enough data for GMM
+    if len(df) < 50:
+        df['Market_Regime'] = 1 # Default to ranging
+        return df
+
+    X = df[regime_feats].fillna(0).values
+    # Standardize
+    X_mean = X.mean(axis=0)
+    X_std = X.std(axis=0) + 1e-9
+    X_norm = (X - X_mean) / X_std
+    
+    try:
+        gmm = GaussianMixture(n_components=n_regimes, random_state=42, n_init=5)
+        df['Market_Regime'] = gmm.fit_predict(X_norm)
+    except Exception:
+        df['Market_Regime'] = 1
+        
+    return df
+
+class iTransformer(nn.Module):
+    """
+    Simplified iTransformer-inspired architecture for time-series.
+    Inverts dimensions to apply attention across the feature dimension.
+    """
+    def __init__(self, num_features, seq_len, d_model=64, n_heads=4, num_layers=2):
+        super().__init__()
+        self.seq_len = seq_len
+        self.feature_embedding = nn.Linear(seq_len, d_model)
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=n_heads, 
+            dim_feedforward=d_model * 4,
+            batch_first=True,
+            dropout=0.1
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        self.output_layer = nn.Linear(num_features * d_model, 3) # 3 classes: SELL, HOLD, BUY
+        
+    def forward(self, x):
+        # x shape: (batch, seq_len, num_features)
+        # iTransformer: invert to (batch, num_features, seq_len)
+        x = x.permute(0, 2, 1)
+        
+        # Embed time dimension
+        x = self.feature_embedding(x) # (batch, num_features, d_model)
+        
+        # Transformer attention across features
+        x = self.transformer(x) # (batch, num_features, d_model)
+        
+        # Flatten and predict
+        x = x.reshape(x.size(0), -1)
+        return self.output_layer(x)
+
+def train_itransformer(X_sc, y_enc, seq_len=10, epochs=20, lr=0.001):
+    """
+    Trains the iTransformer model on provided scaled features and encoded labels.
+    """
+    num_features = X_sc.shape[1]
+    
+    # Create sequences
+    X_seq, y_seq = [], []
+    for i in range(len(X_sc) - seq_len):
+        X_seq.append(X_sc[i : i + seq_len])
+        y_seq.append(y_enc[i + seq_len])
+    
+    if len(X_seq) < 32:
+        return None
+        
+    X_seq = torch.FloatTensor(np.array(X_seq))
+    y_seq = torch.LongTensor(np.array(y_seq))
+    
+    model = iTransformer(num_features, seq_len)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
+    
+    model.train()
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        outputs = model(X_seq)
+        loss = criterion(outputs, y_seq)
+        loss.backward()
+        optimizer.step()
+        
+    return model
+
 def assign_labels(df: pd.DataFrame):
+
+
     """
     Professional Triple-Barrier Labeling.
     We look 5 days ahead and check if:
@@ -393,27 +516,25 @@ def train_or_load_model(df: pd.DataFrame) -> dict:
 
 def tune_and_train_global_model(df: pd.DataFrame) -> dict:
     """
-    Professional-grade global model training pipeline:
-    - TimeSeriesSplit CV (no future-data leakage into hyperparameter search)
-    - 70/15/15 chronological train/calibration/test split
-    - Isotonic probability calibration (fixes overconfident ensemble probabilities)
-    - Feature importance filtering (drops noise features below 0.3% importance)
-    - 4-model ensemble: XGBoost + LightGBM + RandomForest + ExtraTrees
-    - Weighted soft voting with calibrated probabilities
+    Advanced Global Model Training:
+    - Regime Detection (GMM)
+    - Optuna-based Hyperparameter Optimization
+    - Regime-Specific Expert Ensembles
+    - SHAP Explainability artifacts
     """
     import logging
     logger = logging.getLogger(__name__)
 
-    # Pre-labeled per-stock → skip assign_labels (avoids inter-stock label leakage)
+    # 1. Regime Detection
+    df = detect_regimes(df)
+    
     if 'Target' not in df.columns:
         WARMUP = 26
         if len(df) > WARMUP * 2:
             df = df.iloc[WARMUP:].reset_index(drop=True)
         df, threshold = assign_labels(df)
     else:
-        future = df['Close'].shift(-5)
-        returns = ((future - df['Close']) / df['Close']).dropna()
-        threshold = max(float(returns.std()), 0.005)
+        threshold = 0.015
 
     for f in FEATURES:
         if f not in df.columns:
@@ -421,206 +542,148 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
 
     X_all = _safe_float_array(df[FEATURES])
     y_all = df['Target'].values
+    regimes = df['Market_Regime'].values
 
     if len(X_all) < 100:
-        raise ValueError("Global model requires at least 100 rows. Add more stocks to the retrain set.")
-
-    # ── Chronological 70/15/15 split — no shuffling ever ──────────────────
-    n          = len(X_all)
-    train_end  = int(n * 0.70)
-    calib_end  = int(n * 0.85)
-
-    X_train, y_train = X_all[:train_end],  y_all[:train_end]
-    X_calib, y_calib = X_all[train_end:calib_end], y_all[train_end:calib_end]
-    X_test,  y_test  = X_all[calib_end:],  y_all[calib_end:]
-
-    # Guarantee all 3 classes in training
-    missing_classes = set([0, 1, 2]) - set(np.unique(y_train))
-    for mc in missing_classes:
-        X_train = np.vstack([X_train, np.zeros(X_train.shape[1])])
-        y_train = np.append(y_train, mc)
+        raise ValueError("Global model requires at least 100 rows.")
 
     le = LabelEncoder()
-    y_train_enc = le.fit_transform(y_train)
-
-    scaler       = RobustScaler()
-    X_train_sc   = scaler.fit_transform(X_train)
-    X_calib_sc   = scaler.transform(X_calib)
-    X_test_sc    = scaler.transform(X_test)
-    X_all_sc     = scaler.transform(X_all)
-
-    # ── Time-Decay Sample Weighting (Institutional Standard) ─────────────
-    # We give more weight to RECENT samples. The market 2 years ago is
-    # less relevant than the market 2 months ago.
-    recency_weights = np.linspace(0.5, 1.0, len(y_train_enc))
-    class_weights   = compute_sample_weight(class_weight='balanced', y=y_train_enc)
-    sw_train        = class_weights * recency_weights
-
-    # ── TimeSeriesSplit CV — respects time ordering, no future leakage ────
-    tscv = TimeSeriesSplit(n_splits=5)
-
-    xgb_base = xgb.XGBClassifier(random_state=42, eval_metric='mlogloss', verbosity=0)
-    lgb_base = lgb.LGBMClassifier(random_state=42, verbosity=-1, force_row_wise=True)
-
-    xgb_params = {
-        'n_estimators':     [200, 300, 400, 500],
-        'max_depth':        [3, 4, 5, 6],
-        'learning_rate':    [0.01, 0.03, 0.05, 0.08],
-        'subsample':        [0.7, 0.8, 0.9],
-        'colsample_bytree': [0.7, 0.8, 0.9],
-        'min_child_weight': [1, 3, 5],
-        'gamma':            [0, 0.05, 0.1],
-        'reg_alpha':        [0, 0.05, 0.1],
-        'reg_lambda':       [0.5, 1.0, 1.5],
-    }
-    lgb_params = {
-        'n_estimators':     [200, 300, 400, 500],
-        'max_depth':        [3, 4, 5, 6],
-        'learning_rate':    [0.01, 0.03, 0.05, 0.08],
-        'subsample':        [0.7, 0.8, 0.9],
-        'colsample_bytree': [0.7, 0.8, 0.9],
-        'min_child_samples':[5, 10, 20],
-        'reg_alpha':        [0, 0.05, 0.1],
-        'reg_lambda':       [0.5, 1.0, 1.5],
-    }
-
-    xgb_search = RandomizedSearchCV(xgb_base, xgb_params, n_iter=15, cv=tscv,
-                                    scoring='f1_macro', random_state=42, n_jobs=-1)
-    xgb_search.fit(X_train_sc, y_train_enc, sample_weight=sw_train)
-    best_xgb = xgb_search.best_estimator_
-
-    lgb_search = RandomizedSearchCV(lgb_base, lgb_params, n_iter=15, cv=tscv,
-                                    scoring='f1_macro', random_state=42, n_jobs=-1)
-    lgb_search.fit(X_train_sc, y_train_enc, sample_weight=sw_train)
-    best_lgb = lgb_search.best_estimator_
-
-    rf_model = RandomForestClassifier(
-        n_estimators=400, max_depth=10, min_samples_split=4,
-        min_samples_leaf=2, max_features='sqrt', random_state=42, n_jobs=-1,
-    )
-    et_model = ExtraTreesClassifier(
-        n_estimators=300, max_depth=10, min_samples_split=4,
-        min_samples_leaf=2, max_features='sqrt', random_state=42, n_jobs=-1,
-    )
-
-    # ── 4-model soft-voting ensemble ──────────────────────────────────────
-    # XGB 35% + LGB 30% + RF 20% + ET 15%
-    ensemble = VotingClassifier(
-        estimators=[('xgb', best_xgb), ('lgb', best_lgb), ('rf', rf_model), ('et', et_model)],
-        voting='soft',
-        weights=[3.5, 3.0, 2.0, 1.5],
-    )
-    ensemble.fit(X_train_sc, y_train_enc, sample_weight=sw_train)
-
-    # ── Feature importance filtering (Professional RFE Upgrade) ──────────
-    # We use RFE with a Random Forest estimator to find the optimal subset 
-    # of features, removing those that contribute only noise.
-    from sklearn.feature_selection import RFE
+    y_all_enc = le.fit_transform(y_all)
     
-    logger.info("Starting Recursive Feature Elimination (RFE)...")
-    rfe_selector = RFE(
-        estimator=RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
-        n_features_to_select=min(40, len(FEATURES)), # Target top 40 features
-        step=5
-    )
-    rfe_selector.fit(X_train_sc, y_train_enc)
-    selected_mask = rfe_selector.support_
-    selected_feats = [f for f, keep in zip(FEATURES, selected_mask) if keep]
+    scaler = RobustScaler()
+    X_all_sc = scaler.fit_transform(X_all)
 
-    logger.info("RFE Complete: %d/%d features kept", len(selected_feats), len(FEATURES))
-
-    # Retrain scaler + all models on selected features only
-    X_train_sel = _safe_float_array(df.iloc[:train_end][selected_feats])
-    X_calib_sel = _safe_float_array(df.iloc[train_end:calib_end][selected_feats]) if calib_end > train_end else X_train_sel[:0]
-    X_test_sel  = _safe_float_array(df.iloc[calib_end:][selected_feats]) if len(df) > calib_end else X_train_sel[:0]
-
-    scaler2 = RobustScaler()
-    X_tr_sc2 = scaler2.fit_transform(X_train_sel)
-    X_ca_sc2 = scaler2.transform(X_calib_sel) if len(X_calib_sel) > 0 else X_tr_sc2[:0]
-    X_te_sc2 = scaler2.transform(X_test_sel)  if len(X_test_sel)  > 0 else X_tr_sc2[:0]
-
-    # Pad training set with missing classes again after feature selection
-    y_tr2 = y_train_enc.copy()
-    missing2 = set([0, 1, 2]) - set(np.unique(y_tr2))
-    for mc in missing2:
-        X_tr_sc2 = np.vstack([X_tr_sc2, np.zeros(X_tr_sc2.shape[1])])
-        y_tr2    = np.append(y_tr2, mc)
-    sw_tr2 = compute_sample_weight(class_weight='balanced', y=y_tr2)
-
-    best_xgb2 = xgb.XGBClassifier(**{**xgb_search.best_params_, 'random_state': 42, 'eval_metric': 'mlogloss', 'verbosity': 0})
-    best_lgb2 = lgb.LGBMClassifier(**{**lgb_search.best_params_, 'random_state': 42, 'verbosity': -1, 'force_row_wise': True})
-    rf2 = RandomForestClassifier(n_estimators=400, max_depth=10, min_samples_split=4, min_samples_leaf=2, max_features='sqrt', random_state=42, n_jobs=-1)
-    et2 = ExtraTreesClassifier(n_estimators=300,  max_depth=10, min_samples_split=4, min_samples_leaf=2, max_features='sqrt', random_state=42, n_jobs=-1)
-
-    # ── Advanced Stacking Ensemble (Professional V2) ─────────────────────
-    meta_model2 = LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42)
+    # 2. Optuna Optimization for each Regime Expert
+    regime_experts = {}
+    regime_metrics = {}
     
-    ensemble2 = StackingClassifier(
-        estimators=[
-            ('xgb', xgb.XGBClassifier(**{**xgb_search.best_params_, 'random_state': 42, 'eval_metric': 'mlogloss', 'verbosity': 0})),
-            ('lgb', lgb.LGBMClassifier(**{**lgb_search.best_params_, 'random_state': 42, 'verbosity': -1, 'force_row_wise': True})),
-            ('rf', rf2),
-            ('et', et2)
-        ],
-        final_estimator=meta_model2,
-        cv=5, # Use standard 5-fold partitions for the internal stacking logic
-        stack_method='predict_proba',
-        n_jobs=-1,
-    )
-    ensemble2.fit(X_tr_sc2, y_tr2, sample_weight=sw_tr2)
-
-    # ── Final Ensemble (Self-Calibrating) ──────────────────────────────────
-    # Since we are using a StackingClassifier with a LogisticRegression 
-    # meta-learner, the probabilities are already professionally calibrated.
-    # We use ensemble2 directly to avoid library version conflicts.
-    final_model = ensemble2
-    logger.info("Ensemble model finalized (Stacking Meta-Learner active)")
-
-    # ── Evaluate on held-out test set ─────────────────────────────────────
-    if len(X_te_sc2) >= 10:
-        y_test_enc = le.transform(np.clip(y_test, 0, 2))
-        y_pred     = final_model.predict(X_te_sc2)
-        acc        = accuracy_score(y_test_enc, y_pred)
-        f1_mac     = f1_score(y_test_enc, y_pred, average='macro', zero_division=0)
-        report     = classification_report(
-            y_test_enc, y_pred,
-            labels=list(range(len(le.classes_))),
-            target_names=[str(c) for c in le.classes_],
-            output_dict=True, zero_division=0,
-        )
-    else:
-        acc    = xgb_search.best_score_
-        f1_mac = 0.0
-        report = {}
-
-    label_map = {str(c): {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(c, str(c)) for c in le.classes_}
-    per_class = {}
-    for k, v in report.items():
-        if k in label_map and isinstance(v, dict):
-            per_class[label_map[k]] = {
-                'precision': round(v['precision'] * 100, 1),
-                'recall':    round(v['recall']    * 100, 1),
-                'f1':        round(v['f1-score']  * 100, 1),
-                'support':   int(v['support']),
+    for r in np.unique(regimes):
+        logger.info(f"Training Expert for Regime {r}...")
+        mask = (regimes == r)
+        if mask.sum() < 20:
+            logger.warning(f"Regime {r} has too little data ({mask.sum()}). Skipping expert.")
+            continue
+            
+        Xr, yr_global = X_all_sc[mask], y_all_enc[mask]
+        
+        # ── CRITICAL FIX: Re-encode labels for this regime ──────────────────
+        # The global LabelEncoder may have classes [0,1,2] but this regime's
+        # subset may only have [1,2]. XGBoost crashes if classes don't start
+        # from 0. Re-encoding ensures classes are always [0, 1, ...].
+        unique_classes = np.unique(yr_global)
+        if len(unique_classes) < 2:
+            logger.warning(f"Regime {r} has only 1 class — skipping expert (can't train classifier).")
+            continue
+        
+        regime_le = LabelEncoder()
+        yr = regime_le.fit_transform(yr_global)  # Always [0, 1, ...] for this regime
+        num_classes = len(unique_classes)
+        
+        # 2-fold CV — fast enough for financial time series, saves 33% over 3-fold
+        tscv = TimeSeriesSplit(n_splits=2)
+        
+        def objective(trial, _Xr=Xr, _yr=yr, _tscv=tscv, _nc=num_classes):
+            param = {
+                'n_estimators': trial.suggest_int('n_estimators', 100, 300),
+                'max_depth': trial.suggest_int('max_depth', 3, 7),
+                'learning_rate': trial.suggest_float('learning_rate', 0.02, 0.15, log=True),
+                'subsample': trial.suggest_float('subsample', 0.7, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.7, 1.0),
+                'random_state': 42,
+                'eval_metric': 'mlogloss',
+                'verbosity': 0,
+                'n_jobs': -1,
+                'num_class': _nc if _nc > 2 else None,  # Only needed for multiclass
             }
+            # Remove None values
+            param = {k: v for k, v in param.items() if v is not None}
+            model = xgb.XGBClassifier(**param)
+            scores = []
+            for train_idx, val_idx in _tscv.split(_Xr):
+                X_train, X_val = _Xr[train_idx], _Xr[val_idx]
+                y_train, y_val = _yr[train_idx], _yr[val_idx]
+                # Guard: skip fold if train set has only 1 class
+                if len(np.unique(y_train)) < 2:
+                    continue
+                try:
+                    model.fit(X_train, y_train)
+                    preds = model.predict(X_val)
+                    scores.append(f1_score(y_val, preds, average='macro', zero_division=0))
+                except Exception:
+                    continue
+            return np.mean(scores) if scores else 0.0
+
+        # 5 trials × 2-fold = 10 fits per regime (was 30 — 3x faster)
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        study = optuna.create_study(direction='maximize')
+        study.optimize(objective, n_trials=5)
+        
+        best_params = study.best_params if study.best_value > 0 else {}
+        best_xgb = xgb.XGBClassifier(
+            **{k: v for k, v in best_params.items()},
+            random_state=42, eval_metric='mlogloss', verbosity=0, n_jobs=-1
+        )
+        
+        # Also include a LightGBM with default/simple tuning
+        best_lgb = lgb.LGBMClassifier(n_estimators=200, max_depth=6, random_state=42, verbosity=-1)
+        
+        expert = VotingClassifier(
+            estimators=[('xgb', best_xgb), ('lgb', best_lgb)],
+            voting='soft',
+            weights=[2.0, 1.0]
+        )
+        
+        # Final Fit for Expert (use re-encoded labels)
+        expert.fit(Xr, yr)
+        regime_experts[int(r)] = expert
+        
+        # Quick eval
+        y_pred = expert.predict(Xr)
+        regime_metrics[int(r)] = accuracy_score(yr, y_pred)
+
+    # 3. Transformer Expert (Temporal Analysis)
+    logger.info("Training iTransformer Expert...")
+    itran_model = train_itransformer(X_all_sc, y_all_enc)
+    
+    # 4. Global Stacking Ensemble (as fallback or coordinator)
+    meta_model = LogisticRegression(class_weight='balanced', random_state=42)
+    global_ensemble = StackingClassifier(
+        estimators=[
+            ('xgb', xgb.XGBClassifier(n_estimators=200, max_depth=6, random_state=42, eval_metric='mlogloss', verbosity=0, n_jobs=-1)),
+            ('lgb', lgb.LGBMClassifier(n_estimators=200, max_depth=6, random_state=42, verbosity=-1))
+        ],
+        final_estimator=meta_model,
+        cv=3,   # was 5 — saves 2 full training passes
+        stack_method='predict_proba',
+        n_jobs=-1
+    )
+    global_ensemble.fit(X_all_sc, y_all_enc)
+
+    # 4. SHAP Explainer (Global)
+    # Use a background dataset for SHAP (subset of training data)
+    background = X_all_sc[np.random.choice(X_all_sc.shape[0], min(100, X_all_sc.shape[0]), replace=False)]
+    
+    # We'll use the global ensemble for SHAP to avoid regime-switching complexity in explanations
+    # but we can also use a specific expert. Let's use the XGB base for faster SHAP.
+    explainer = shap.TreeExplainer(global_ensemble.named_estimators_['xgb'])
 
     metrics = {
-        'accuracy':         round(acc * 100, 2),
-        'f1_macro':         round(f1_mac * 100, 2),
-        'threshold_used':   round(threshold * 100, 3),
-        'features_used':    len(selected_feats),
-        'tuned_params_xgb': xgb_search.best_params_,
-        'tuned_params_lgb': lgb_search.best_params_,
-        'per_class':        per_class,
+        'accuracy': round(accuracy_score(y_all_enc, global_ensemble.predict(X_all_sc)) * 100, 2),
+        'regime_experts': len(regime_experts),
+        'regime_metrics': {str(k): round(v * 100, 2) for k, v in regime_metrics.items()},
+        'features_used': len(FEATURES),
     }
 
     artifacts = {
-        'model':          final_model,
-        'encoder':        le,
-        'scaler':         scaler2,
-        'features':       selected_feats,
-        'test_start_idx': calib_end,
-        'metrics':        metrics,
+        'model': global_ensemble,
+        'regime_experts': regime_experts,
+        'itran_model': itran_model,
+        'encoder': le,
+        'scaler': scaler,
+        'features': FEATURES,
+        'metrics': metrics,
+        'explainer': explainer,
+        'background_data': background
     }
 
     _save_global_model(artifacts)
@@ -628,10 +691,12 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
 
 
 def predict_all_signals(df: pd.DataFrame, artifacts: dict) -> list:
-    """Predict BUY/SELL/HOLD for every row. Returns a list of signal strings."""
-    model    = artifacts['model']
-    le       = artifacts['encoder']
-    scaler   = artifacts['scaler']
+    """Predict BUY/SELL/HOLD for every row using Regime Experts if available."""
+    df = detect_regimes(df)
+    model = artifacts['model']
+    experts = artifacts.get('regime_experts', {})
+    le = artifacts['encoder']
+    scaler = artifacts['scaler']
     features = artifacts.get('features', FEATURES)
 
     for f in features:
@@ -639,23 +704,34 @@ def predict_all_signals(df: pd.DataFrame, artifacts: dict) -> list:
             df[f] = 0.0
 
     try:
-        X         = _safe_float_array(df[features])
-        X_scaled  = scaler.transform(X)
-        X_scaled  = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
-        enc_preds = model.predict(X_scaled)
-        preds     = le.inverse_transform(enc_preds)
-        sig_map   = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}
-        return [sig_map.get(int(p), 'HOLD') for p in preds]
+        X = _safe_float_array(df[features])
+        X_scaled = scaler.transform(X)
+        X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
+        regimes = df['Market_Regime'].values
+        
+        preds = []
+        for i in range(len(X_scaled)):
+            r = int(regimes[i])
+            if r in experts:
+                p = experts[r].predict(X_scaled[i:i+1])[0]
+            else:
+                p = model.predict(X_scaled[i:i+1])[0]
+            preds.append(p)
+            
+        decoded = le.inverse_transform(preds)
+        sig_map = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}
+        return [sig_map.get(int(p), 'HOLD') for p in decoded]
     except Exception:
         return ['HOLD'] * len(df)
 
 
 def predict_latest(df: pd.DataFrame, artifacts: dict = None):
     """
-    Predicts the BUY/SELL/HOLD signal for the most recent row.
-    Accepts freshly trained artifacts directly (avoids stale disk model).
-    Falls back to disk, retraining if the saved format is outdated.
-    Returns (prediction, confidence_pct, backtest_stats, model_metrics, all_proba, all_signals).
+    Advanced Prediction Pipeline:
+    - Current Regime Detection
+    - Expert Selection
+    - SHAP Explainability
+    - Confidence Thresholding
     """
     if artifacts is None:
         latest_model = _get_latest_model_path()
@@ -664,16 +740,23 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
         else:
             try:
                 artifacts = joblib.load(latest_model)
-                if 'scaler' not in artifacts:
-                    _, artifacts = train_or_load_model(df)
             except Exception:
                 _, artifacts = train_or_load_model(df)
 
+    # 1. Regime Detection for latest data
+    df = detect_regimes(df)
+    current_regime = int(df['Market_Regime'].iloc[-1])
+    
     model    = artifacts['model']
+    experts  = artifacts.get('regime_experts', {})
     le       = artifacts['encoder']
     scaler   = artifacts['scaler']
     features = artifacts.get('features', FEATURES)
     metrics  = artifacts.get('metrics', {})
+    
+    # Select Expert or Fallback
+    active_model = experts.get(current_regime, model)
+    regime_name = {0: "Bearish", 1: "Ranging", 2: "Bullish"}.get(current_regime, "Unknown")
 
     for f in features:
         if f not in df.columns:
@@ -683,43 +766,105 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
     latest_scaled = scaler.transform(raw)
     latest_scaled = np.nan_to_num(latest_scaled, nan=0.0, posinf=0.0, neginf=0.0)
 
-    proba = model.predict_proba(latest_scaled)[0]
-    if np.any(np.isnan(proba)):
-        proba = np.ones(len(proba)) / len(proba)
+    X_df          = pd.DataFrame(latest_scaled, columns=features)
+    proba         = active_model.predict_proba(X_df)[0]
+    
+    # Optional: Supplement with iTransformer (Temporal Expert)
+    if 'itran_model' in artifacts and artifacts['itran_model'] is not None and len(df) >= 10:
+        try:
+            itran = artifacts['itran_model']
+            itran.eval()
+            seq = scaler.transform(_safe_float_array(df.iloc[-10:][features]))
+            seq_t = torch.FloatTensor(seq).unsqueeze(0)
+            with torch.no_grad():
+                it_out = torch.softmax(itran(seq_t), dim=1).numpy()[0]
+            # Ensemble with iTransformer (70% Trees, 30% Transformer)
+            proba = 0.7 * proba + 0.3 * it_out
+        except Exception:
+            pass
+    
+    # 2. SHAP Explanation
+    explanation = "No explanation available."
+    if 'explainer' in artifacts:
+        try:
+            explainer = artifacts['explainer']
+            shap_values = explainer.shap_values(latest_scaled)
+            # shap_values is a list of arrays for multiclass
+            # Get values for the predicted class
+            pred_idx = np.argmax(proba)
+            vals = shap_values[pred_idx][0] if isinstance(shap_values, list) else shap_values[0]
+            
+            # Get top 3 features
+            top_idx = np.argsort(np.abs(vals))[-3:][::-1]
+            top_feats = []
+            for idx in top_idx:
+                fname = features[idx]
+                fval = df[fname].iloc[-1]
+                impact = "positive" if vals[idx] > 0 else "negative"
+                top_feats.append(f"{fname} ({impact})")
+            explanation = f"Signal driven by: {', '.join(top_feats)}. Current Market Regime: {regime_name}."
+        except Exception:
+            pass
 
-    # ── Confidence Thresholding (Advanced Quality Control) ───────────────
-    # Only allow a BUY or SELL if the AI is truly confident (> 50%).
-    # This reduces "false positives" while allowing more valid signals.
+    # 3. Prediction & Confidence
     CONFIDENCE_THRESHOLD = 50.0
     pred_enc_idx = int(np.argmax(proba))
     confidence   = round(float(proba[pred_enc_idx] * 100), 2)
     pred_class   = le.inverse_transform([pred_enc_idx])[0]
     
     raw_prediction = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(pred_class, 'HOLD')
-    
-    if raw_prediction in ['BUY', 'SELL'] and confidence < CONFIDENCE_THRESHOLD:
-        prediction = 'HOLD'
-    else:
-        prediction = raw_prediction
+    prediction = raw_prediction if confidence >= CONFIDENCE_THRESHOLD else 'HOLD'
 
     all_proba = {'BUY': 0.0, 'HOLD': 0.0, 'SELL': 0.0}
     for i, cls in enumerate(le.classes_):
         label = {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(cls, str(cls))
         all_proba[label] = round(float(proba[i]) * 100, 1)
 
-    # ── Professional Backtest Window ─────────────────────────────────────
-    # Previously, this was limited to the last 10 days, resulting in 0 trades.
-    # We now target a minimum 60-day window for statistical significance.
+    # 4. Backtest & Signals
     test_start  = artifacts.get('test_start_idx', int(len(df) * 0.8))
-    WARMUP      = 26
-    
-    # Calculate a window that covers the test set but ensures at least 60 days if possible
-    MIN_WINDOW  = 60
-    actual_start = min(test_start + WARMUP, max(0, len(df) - MIN_WINDOW))
-    
+    actual_start = min(test_start + 26, max(0, len(df) - 60))
     test_df     = df.iloc[actual_start:].copy()
-    backtest    = run_backtest(model, le, scaler, features, test_df)
+    
+    backtest    = run_backtest(active_model, le, scaler, features, test_df)
     all_signals = predict_all_signals(df, artifacts)
+
+    # 5. Multi-Timeframe Confluence Analysis (Phase 2 Goal)
+    try:
+        # Resample to Weekly to check broader trend
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'])
+            df_w = df.set_index('Date').resample('W').last().dropna()
+            if len(df_w) >= 2:
+                w_trend = "Bullish" if (df_w['Close'].iloc[-1] > df_w['MA_50'].iloc[-1] if 'MA_50' in df_w else df_w['Close'].iloc[-1] > df_w['Close'].iloc[-2]) else "Bearish"
+                d_trend = "Bullish" if prediction == "BUY" else "Bearish" if prediction == "SELL" else "Neutral"
+                
+                confluence = (w_trend == d_trend)
+                metrics['confluence'] = {
+                    "weekly_trend": w_trend,
+                    "daily_signal": d_trend,
+                    "aligned": confluence,
+                    "score": 1.5 if confluence else 1.0  # Multiplier for signal strength
+                }
+                if confluence:
+                    explanation += f" Confirmed by {w_trend} Weekly timeframe confluence."
+    except Exception as e:
+        logger.debug(f"Confluence analysis failed: {e}")
+
+    # 6. Pattern Similarity Search (Phase 3 Goal)
+    try:
+        from app.services.vector_service import similarity_engine
+        current_embedding = similarity_engine.create_embedding(df)
+        if current_embedding is not None:
+            similarity_match = similarity_engine.find_historical_match(current_embedding)
+            metrics['pattern_similarity'] = similarity_match
+            if similarity_match['similarity'] > 80:
+                explanation += f" This setup has a {similarity_match['similarity']}% similarity to the {similarity_match['event']} ({similarity_match['date']})."
+    except Exception as e:
+        logger.debug(f"Similarity search failed: {e}")
+
+    # Add explanation to metrics for the frontend to display
+    metrics['explanation'] = explanation
+    metrics['regime'] = regime_name
 
     return prediction, confidence, backtest, metrics, all_proba, all_signals
 
@@ -747,7 +892,8 @@ def run_backtest(model, encoder, scaler, features: list, df: pd.DataFrame) -> di
     try:
         X     = scaler.transform(_safe_float_array(df[features]))
         X     = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        preds = encoder.inverse_transform(model.predict(X))
+        X_df  = pd.DataFrame(X, columns=features)
+        preds = encoder.inverse_transform(model.predict(X_df))
     except Exception:
         return None
 

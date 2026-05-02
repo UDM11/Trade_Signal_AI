@@ -355,19 +355,21 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
                     sector_alignment = -1.0
         except: pass
 
-        # Generate deep explanation
-        # Optimization: Only use expensive OpenAI calls for BUY signals.
-        # This saves significant cost and time during market scans.
-        is_buy = (prediction == "BUY")
-        
+        # OpenAI is ONLY called during Deep AI Analysis (force_ai=True).
+        # During regular scans and bulk processing, always use the fast algorithm fallback.
+        # This eliminates all API costs from the automated scan pipeline.
         ai_result = await asyncio.to_thread(
             generate_explanation,
             prediction,
             confidence,
             indicators_summary,
             news_data,
-            force_fallback=(not is_buy and not force_ai)
+            force_fallback=(not force_ai)  # ← Only Deep AI Analysis button triggers OpenAI
         )
+
+        # ── Capture Regime and SHAP from Model Metrics ──
+        regime = model_metrics.get('regime', 'Unknown')
+        shap_explanation = model_metrics.get('explanation', '')
 
         # Build chart data and signal history from the indicator-enriched df
         chart_data:     list = []
@@ -407,7 +409,9 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
             "prediction":       prediction,
             "confidence_score": float(f"{confidence:.2f}"),
             "model_used":       "XGBoost+LightGBM+RF Ensemble",
-            "explanation":      ai_result.get("explanation", ""),
+            "explanation":      shap_explanation if not ai_result.get("explanation") else ai_result.get("explanation"),
+            "shap_explanation": shap_explanation,
+            "regime":           regime,
             "target_price":     target_price,
             "target_pct":       round(((target_price - last_close) / last_close) * 100, 2) if target_price and last_close else 0,
             "stop_loss":        ai_result.get("stop_loss"),
@@ -419,6 +423,8 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
             "model_metrics":    model_metrics,
             "ai_analysis": {
                 "explanation":      ai_result.get("explanation", ""),
+                "shap_explanation": shap_explanation,
+                "regime":           regime,
                 "ideal_entry":       ai_result.get("ideal_entry"),
                 "entry_zone_low":    ai_result.get("entry_zone_low"),
                 "entry_zone_high":   ai_result.get("entry_zone_high"),
@@ -431,7 +437,7 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
                 "stop_loss":         ai_result.get("stop_loss"),
                 "exit_condition":    ai_result.get("exit_condition"),
                 "risk_note":         ai_result.get("risk_note"),
-                "market_structure":  ai_result.get("market_structure"),
+                "market_structure":  ai_result.get("market_structure") or regime.upper(),
                 "volume_profile":    calculate_volume_profile(df),
                 "fibonacci":         calculate_fibonacci(df),
                 "weekly_confluence": weekly_confluence,
@@ -827,8 +833,7 @@ async def run_weekly_retraining() -> None:
         if not stocks:
             stocks = live.get("top_turnovers", []) + live.get("top_volumes", [])
             
-        # Select top 50 stocks by volume/turnover for training
-        # Deduplicate to avoid training bias if a stock is in both turnover and volume lists
+        # Select top 25 stocks by volume for training (25 is plenty; 50 adds 2x API time)
         seen = set()
         deduped_stocks = []
         for s in stocks:
@@ -837,7 +842,7 @@ async def run_weekly_retraining() -> None:
                 seen.add(sym)
                 deduped_stocks.append(s)
         
-        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:50]
+        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:25]
         symbols = [s["symbol"] for s in stocks if s.get("symbol")]
         
         _job_status["running"] = True
@@ -848,26 +853,38 @@ async def run_weekly_retraining() -> None:
             logger.error("No symbols found for weekly retraining.")
             _job_status["running"] = False
             return
-            
-        dfs = []
+        
+        # ── FAST: Fetch all stock charts concurrently (10 at a time) ──────────
+        fetch_sem = asyncio.Semaphore(10)
         total_syms = len(symbols)
-        for i, symbol in enumerate(symbols, 1):
-            _job_status["progress"]["current"] = 5 + int((i/total_syms) * 45)
-            chart = await get_stock_chart(symbol)
+        
+        async def _fetch_one(sym):
+            async with fetch_sem:
+                return sym, await get_stock_chart(sym)
+        
+        logger.info("Fetching chart data for %d symbols in parallel...", total_syms)
+        fetch_tasks = [_fetch_one(s) for s in symbols]
+        fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+        _job_status["progress"]["current"] = 20
+        
+        # ── Process fetched data ──────────────────────────────────────────────
+        dfs = []
+        for i, result in enumerate(fetch_results, 1):
+            _job_status["progress"]["current"] = 20 + int((i/total_syms) * 30)
+            if isinstance(result, Exception):
+                continue
+            symbol, chart = result
             if chart and chart.get("chart_data"):
-                df = _chart_to_df(chart["chart_data"])
-                if len(df) >= 50:
-                    # Bug fix 2: run CPU-bound work in thread pool — avoids blocking event loop
-                    df = await asyncio.to_thread(add_indicators, df)
+                raw_df = _chart_to_df(chart["chart_data"])
+                # Cap to last 500 rows (≈5 years) — plenty for pattern learning, much faster to process
+                raw_df = raw_df.tail(500).reset_index(drop=True)
+                if len(raw_df) >= 50:
                     try:
-                        # Bug fix 1 & 4: label each stock individually BEFORE concat so
-                        # shift(-5) never bleeds across stock boundaries, and warmup rows
-                        # are dropped per-stock (add_indicators already removed first 20).
+                        df = await asyncio.to_thread(add_indicators, raw_df)
                         df, _ = assign_labels(df)
                         dfs.append(df)
                     except Exception as label_err:
                         logger.warning("[%s] labeling skipped: %s", symbol, label_err)
-            await asyncio.sleep(0.6)
             
         if not dfs:
             logger.error("Could not fetch valid chart data for global model.")

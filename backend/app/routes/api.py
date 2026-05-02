@@ -19,6 +19,7 @@ from app.file_parser import parse_file
 from app.services.openai_service import generate_explanation
 from app.services.news_service import get_company_news
 from app.services.supabase_client import get_supabase
+from app.services.cache_service import cached_api_response
 
 router = APIRouter()
 
@@ -293,7 +294,7 @@ async def predict_stock(
             if not news_text and prediction == "BUY":
                 news_text = await get_company_news(symbol)
 
-            ai_result = generate_explanation(prediction, predict_confidence, indicators_summary, news_text, force_fallback=(prediction != "BUY"))
+            ai_result = generate_explanation(prediction, predict_confidence, indicators_summary, news_text, force_fallback=True)  # OpenAI only via Deep AI Analysis
             
             # Map result to a standardized record
             record = {
@@ -351,6 +352,7 @@ async def predict_stock(
 
 
 @router.get("/predictions")
+@cached_api_response("dashboard_signals", expire=300)
 async def get_predictions():
     """Return history from Supabase if configured, otherwise from local JSON file."""
     supabase = get_supabase()
@@ -458,6 +460,7 @@ async def nepse_market_status():
 
 @router.get("/nepse/live")
 @limiter.limit("30/minute")
+@cached_api_response("nepse_live", expire=60)
 async def nepse_live(request: Request):
     from app.services.nepse_service import get_live_data, _last_good_response
     try:
@@ -481,6 +484,7 @@ async def nepse_live(request: Request):
 
 @router.get("/nepse/chart/{symbol}")
 @limiter.limit("20/minute")
+@cached_api_response("stock_chart", expire=300)
 async def nepse_chart(request: Request, symbol: str):
     """Historical daily OHLCV for a single NEPSE symbol (for chart rendering)."""
     try:
@@ -518,6 +522,7 @@ async def nepse_quote(request: Request, symbol: str):
 
 @router.get("/nepse/history")
 @limiter.limit("20/minute")
+@cached_api_response("index_history", expire=600)
 async def nepse_history(request: Request):
     """Lifetime historical OHLCV for the NEPSE Index."""
     from app.services.nepse_service import get_nepse_history

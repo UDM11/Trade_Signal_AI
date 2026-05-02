@@ -21,7 +21,7 @@ export function MarketProvider({ children }) {
             .catch(() => {});
 
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = window.location.hostname === 'localhost' ? 'localhost:8000' : window.location.host;
+        const host = window.location.hostname === 'localhost' ? '127.0.0.1:8000' : window.location.host;
         const wsUrl = `${protocol}//${host}/ws/market`;
 
         function connect() {

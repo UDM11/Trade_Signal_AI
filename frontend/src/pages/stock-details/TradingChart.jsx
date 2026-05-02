@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import {
     createChart, ColorType,
-    CandlestickSeries, LineSeries, HistogramSeries,
+    CandlestickSeries, LineSeries, HistogramSeries, AreaSeries, BaselineSeries,
     createSeriesMarkers,
 } from "lightweight-charts";
 import { 
@@ -456,7 +456,7 @@ export default function TradingChart({
             height: mainRef.current.clientHeight,
             rightPriceScale: { borderColor: BORDER, scaleMargins: { top: 0.06, bottom: 0.22 } },
             leftPriceScale:  { visible: false },
-            timeScale: { borderColor: BORDER, rightOffset: 12, barSpacing: 10, timeVisible: false, fixLeftEdge: false },
+            timeScale: { borderColor: BORDER, rightOffset: 28, barSpacing: 10, timeVisible: false, fixLeftEdge: false },
         });
         mainChart.current = mc;
 
@@ -466,7 +466,7 @@ export default function TradingChart({
             height: subRef.current.clientHeight,
             rightPriceScale: { borderColor: BORDER, scaleMargins: { top: 0.1, bottom: 0.1 } },
             leftPriceScale:  { visible: false },
-            timeScale: { visible: false, rightOffset: 12, barSpacing: 10 },
+            timeScale: { visible: false, rightOffset: 28, barSpacing: 10 },
         });
         subChart.current = sc;
 
@@ -492,6 +492,37 @@ export default function TradingChart({
         S.current.bbLo   = mc.addSeries(LineSeries, lineOpt("rgba(99,102,241,0.55)", 1, 2));
         S.current.ichT   = mc.addSeries(LineSeries, lineOpt("#0ea5e9", 1.5));
         S.current.ichK   = mc.addSeries(LineSeries, lineOpt("#f43f5e", 1.5));
+
+        // ── Risk/Reward Zones — BaselineSeries (fills EXACTLY between two price levels) ──
+        // profitZone: line at T2, baseline at entry  → GREEN fill between entry↔T2 only
+        // lossZone:   line at SL, baseline at entry  → RED fill between SL↔entry only
+        // baseline is dynamic — updated per stock via applyOptions() before each setData
+        S.current.profitZone = mc.addSeries(BaselineSeries, {
+            baseValue:        { type: 'price', price: 0 }, // placeholder; set per-stock
+            topLineColor:     'rgba(34, 197, 94, 0.8)',
+            topFillColor1:    'rgba(34, 197, 94, 0.20)',
+            topFillColor2:    'rgba(34, 197, 94, 0.04)',
+            bottomLineColor:  'transparent',
+            bottomFillColor1: 'transparent',
+            bottomFillColor2: 'transparent',
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+        });
+        S.current.lossZone = mc.addSeries(BaselineSeries, {
+            baseValue:        { type: 'price', price: 0 }, // placeholder; set per-stock
+            topLineColor:     'transparent',
+            topFillColor1:    'transparent',
+            topFillColor2:    'transparent',
+            bottomLineColor:  'rgba(239, 68, 68, 0.8)',
+            bottomFillColor1: 'rgba(239, 68, 68, 0.04)',
+            bottomFillColor2: 'rgba(239, 68, 68, 0.20)',
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+        });
 
         // ── RSI sub-panel ──────────────────────────────────────────────────────
         S.current.rsiLine = sc.addSeries(LineSeries, { color: "#22d3ee", lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
@@ -576,10 +607,9 @@ export default function TradingChart({
     useEffect(() => {
         if (!S.current.candle || !data?.length) return;
         const filtered = filteredData;
-        
-        // Removed the "if (!filtered.length) return" so the chart clears when switching
+        const hasBackendInd = filtered.length > 0 && filtered[0].ema9 !== undefined;
 
-        // Chart type
+        // 1. Core Chart Data
         const candleData = chartType === "ha" ? calcHeikinAshi(filtered) : filtered.map(d => ({ time: d.time, open: d.open, high: d.high, low: d.low, close: d.close }));
         if (chartType === "line") {
             S.current.candle.setData([]);
@@ -589,63 +619,85 @@ export default function TradingChart({
             S.current.lineChart.setData([]);
         }
 
-        // Volume
         S.current.vol.setData(filtered.map(d => ({
             time: d.time, value: d.value ?? d.volume ?? 0,
             color: d.close >= d.open ? "rgba(38,166,154,0.35)" : "rgba(239,83,80,0.35)",
         })));
 
-        // ── Overlays ───────────────────────────────────────────────────────────
-        S.current.sma20.setData( overlay.sma20  ? calcSMA(filtered, 20)  : []);
-        S.current.sma50.setData( overlay.sma50  ? calcSMA(filtered, 50)  : []);
-        S.current.ema200.setData(overlay.ema200 ? calcEMA(filtered, 200) : []);
-        S.current.ema9.setData(  overlay.ema9   ? calcEMA(filtered, 9)   : []);
-        S.current.ema21.setData( overlay.ema21  ? calcEMA(filtered, 21)  : []);
-        S.current.vwap.setData(  overlay.vwap   ? calcVWAP(filtered)     : []);
+        // 2. Indicator Calculation Strategy
+        const runWorkerCalc = () => {
+            const worker = new Worker('/indicatorWorker.js');
+            worker.onmessage = (e) => {
+                const { task, result, status } = e.data;
+                if (status === 'success' && task === 'CALC_ALL') {
+                    // Guard: series may be gone if component re-mounted before worker responded
+                    if (!S.current.sma20) { worker.terminate(); return; }
+                    if (overlay.sma20) S.current.sma20.setData(result.sma20);
+                    if (overlay.sma50) S.current.sma50.setData(result.sma50);
+                    if (overlay.ema200) S.current.ema200.setData(result.ema200);
+                    if (overlay.bb) {
+                        S.current.bbUp.setData(result.bb.map(b => ({ time: b.time, value: b.upper })));
+                        S.current.bbMid.setData(result.bb.map(b => ({ time: b.time, value: b.middle })));
+                        S.current.bbLo.setData(result.bb.map(b => ({ time: b.time, value: b.lower })));
+                    }
+                    if (subInd === "rsi") {
+                        S.current.rsiLine.setData(result.rsi);
+                        S.current.rsiOb.setData(result.rsi.map(v => ({ time: v.time, value: 70 })));
+                        S.current.rsiOs.setData(result.rsi.map(v => ({ time: v.time, value: 30 })));
+                        S.current.rsiMid.setData(result.rsi.map(v => ({ time: v.time, value: 50 })));
+                    } else if (subInd === "macd") {
+                        S.current.macdLine.setData(result.macd.macd);
+                        S.current.macdSig.setData(result.macd.signal);
+                        S.current.macdHist.setData(result.macd.hist);
+                    }
+                }
+                worker.terminate();
+            };
+            worker.postMessage({ task: 'CALC_ALL', data: filtered, params: {} });
+        };
 
-        if (overlay.bb) {
-            const bands = calcBB(filtered, 20);
-            S.current.bbUp.setData( bands.map(b => ({ time: b.time, value: b.upper  })));
-            S.current.bbMid.setData(bands.map(b => ({ time: b.time, value: b.middle })));
-            S.current.bbLo.setData( bands.map(b => ({ time: b.time, value: b.lower  })));
+        if (hasBackendInd) {
+            // Priority 1: Use Backend Pre-Calculated Data (Fastest)
+            if (overlay.sma20)  S.current.sma20.setData(filtered.map(d => ({ time: d.time, value: d.ma20 ?? d.sma20 })));
+            if (overlay.sma50)  S.current.sma50.setData(filtered.map(d => ({ time: d.time, value: d.ma50 })));
+            if (overlay.ema200) S.current.ema200.setData(filtered.map(d => ({ time: d.time, value: d.ma200 })));
+            if (overlay.ema9)   S.current.ema9.setData(filtered.map(d => ({ time: d.time, value: d.ema9 })));
+            if (overlay.ema21)  S.current.ema21.setData(filtered.map(d => ({ time: d.time, value: d.ema21 })));
+            if (overlay.vwap)   S.current.vwap.setData(calcVWAP(filtered));
+            
+            if (overlay.bb) {
+                S.current.bbUp.setData(filtered.map(d => ({ time: d.time, value: d.bb_upper })));
+                S.current.bbMid.setData(filtered.map(d => ({ time: d.time, value: d.ma20 || d.sma20 })));
+                S.current.bbLo.setData(filtered.map(d => ({ time: d.time, value: d.bb_lower })));
+            } else { [S.current.bbUp, S.current.bbMid, S.current.bbLo].forEach(s => s.setData([])); }
+
+            if (subInd === "rsi") {
+                const d = filtered.map(v => ({ time: v.time, value: v.rsi }));
+                S.current.rsiLine.setData(d);
+                S.current.rsiOb.setData(d.map(v => ({ time: v.time, value: 70 })));
+                S.current.rsiOs.setData(d.map(v => ({ time: v.time, value: 30 })));
+                S.current.rsiMid.setData(d.map(v => ({ time: v.time, value: 50 })));
+            } else if (subInd === "macd") {
+                S.current.macdLine.setData(filtered.map(v => ({ time: v.time, value: v.macd })));
+                S.current.macdSig.setData(filtered.map(v => ({ time: v.time, value: v.macd_signal })));
+                S.current.macdHist.setData(filtered.map(v => ({ time: v.time, value: v.macd_hist, color: v.macd_hist >= 0 ? "rgba(34,197,94,0.65)" : "rgba(239,68,68,0.65)" })));
+            }
         } else {
-            [S.current.bbUp, S.current.bbMid, S.current.bbLo].forEach(s => s.setData([]));
+            // Priority 2: Use Web Worker for Heavy Calculation (Performance)
+            runWorkerCalc();
         }
 
-        if (overlay.ich) {
-            const { tenkan, kijun } = calcIchimoku(filtered);
-            S.current.ichT.setData(tenkan);
-            S.current.ichK.setData(kijun);
-        } else {
-            S.current.ichT.setData([]);
-            S.current.ichK.setData([]);
-        }
-
-        // ── Sub-panels — clear all, then set active ────────────────────────────
+        // Clear unused indicators
         const clr = keys => keys.forEach(k => S.current[k]?.setData([]));
-        clr(["rsiLine","rsiOb","rsiOs","rsiMid"]);
-        clr(["macdLine","macdSig","macdHist"]);
-        clr(["stochK","stochD","stochOb","stochOs"]);
-        clr(["adxLine","adxPos","adxNeg","adx25"]);
-        clr(["obvLine"]);
-        clr(["cciLine","cciOb","cciOs","cciMid"]);
-        clr(["wrLine","wrOb","wrOs"]);
-
-        if (subInd === "rsi") {
-            const d = calcRSI(filtered);
-            S.current.rsiLine.setData(d);
-            S.current.rsiOb.setData(d.map(v => ({ time: v.time, value: 70 })));
-            S.current.rsiOs.setData(d.map(v => ({ time: v.time, value: 30 })));
-            S.current.rsiMid.setData(d.map(v => ({ time: v.time, value: 50 })));
-        } else if (subInd === "macd") {
-            const { macd, signal, hist } = calcMACD(filtered);
-            S.current.macdLine.setData(macd);
-            S.current.macdSig.setData(signal);
-            S.current.macdHist.setData(hist);
-        } else if (subInd === "stoch") {
+        if (subInd !== "rsi") clr(["rsiLine","rsiOb","rsiOs","rsiMid"]);
+        if (subInd !== "macd") clr(["macdLine","macdSig","macdHist"]);
+        if (!overlay.ich) clr(["ichT","ichK"]);
+        
+        // ── Technical fallbacks for specialized indicators (Phase 4) ──────────
+        if (subInd === "stoch") {
             const d = calcStoch(filtered);
-            S.current.stochK.setData( d.map(v => ({ time: v.time, value: v.k })));
-            S.current.stochD.setData( d.map(v => ({ time: v.time, value: v.d })));
+            S.current.stochK.setData(d.map(v => ({ time: v.time, value: v.k })));
+            S.current.stochD.setData(d.map(v => ({ time: v.time, value: v.d })));
             S.current.stochOb.setData(d.map(v => ({ time: v.time, value: 80 })));
             S.current.stochOs.setData(d.map(v => ({ time: v.time, value: 20 })));
         } else if (subInd === "adx") {
@@ -654,8 +706,6 @@ export default function TradingChart({
             S.current.adxPos.setData(diPlus);
             S.current.adxNeg.setData(diMinus);
             S.current.adx25.setData(adx.map(v => ({ time: v.time, value: 25 })));
-        } else if (subInd === "obv") {
-            S.current.obvLine.setData(calcOBV(filtered));
         } else if (subInd === "cci") {
             const d = calcCCI(filtered);
             S.current.cciLine.setData(d);
@@ -697,6 +747,63 @@ export default function TradingChart({
             mkLine(stopLoss, isSell ? "#26a69a" : "#ef5350", 2, 0, `🛑 SL  Rs.${Number(stopLoss).toFixed(2)}  (${slPct}%)`);
         }
         if (trailingStop)       mkLine(trailingStop, "#f59e0b",                         1, 2, `~ Trail  Rs.${Number(trailingStop).toFixed(2)}`);
+
+        // ── Risk/Reward Projection Zones (Future Only — Professional Style) ───
+        // Zones project FORWARD from the last candle into future trading days.
+        // ✅ Green zone: from entry UP to T2 (profit potential)
+        // ✅ Red zone:   from stop loss UP to entry (risk zone)
+        // Historical candles are NOT overlaid — zones are clean forward projection.
+        if (entry && !isHold && filtered.length > 5) {
+            const lastDate = filtered[filtered.length - 1].time;
+
+            // Generate future business dates using UTC to avoid timezone shift bugs
+            // (Nepal is UTC+5:45 — using local Date causes toISOString to return previous day)
+            const futureDates = (() => {
+                const dates = [];
+                const [y, m, d] = lastDate.split('-').map(Number);
+                const cur = new Date(Date.UTC(y, m - 1, d)); // start at lastDate in UTC
+                while (dates.length < 25) {
+                    cur.setUTCDate(cur.getUTCDate() + 1);
+                    const day = cur.getUTCDay();
+                    if (day !== 0 && day !== 6)  // skip Sat(6) and Sun(0)
+                        dates.push(cur.toISOString().slice(0, 10));
+                }
+                return dates;
+            })();
+
+            // Anchor starts at last candle so there's no gap
+            const zoneDates = [lastDate, ...futureDates];
+
+            // ── Green zone: entry → T2 — BaselineSeries baseline set to entry ──────
+            // The series draws a horizontal line at T2 and fills DOWN to the baseline (entry).
+            const zoneTop = target2 || targetPrice;
+            if (zoneTop && zoneTop > entry) {
+                S.current.profitZone.applyOptions({
+                    baseValue: { type: 'price', price: entry }, // fill stops exactly at entry
+                });
+                S.current.profitZone.setData(zoneDates.map(t => ({
+                    time: t,
+                    value: zoneTop, // horizontal line drawn at T2
+                })));
+            } else { S.current.profitZone.setData([]); }
+
+            // ── Red zone: SL → entry — BaselineSeries baseline set to entry ───────
+            // The series draws a horizontal line at SL and fills UP to the baseline (entry).
+            // Red fills ONLY between SL and entry — nothing below SL, nothing above entry.
+            if (stopLoss && stopLoss < entry) {
+                S.current.lossZone.applyOptions({
+                    baseValue: { type: 'price', price: entry }, // baseline at entry = top of red
+                });
+                S.current.lossZone.setData(zoneDates.map(t => ({
+                    time: t,
+                    value: stopLoss, // horizontal line drawn at SL (below baseline = red fill)
+                })));
+            } else { S.current.lossZone.setData([]); }
+
+        } else {
+            S.current.profitZone?.setData([]);
+            S.current.lossZone?.setData([]);
+        }
         
         // ── Fibonacci Levels ───────────────────────────────────────────────────
         if (overlay.fib && fibonacci?.levels) {

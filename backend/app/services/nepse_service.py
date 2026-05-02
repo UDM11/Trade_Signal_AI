@@ -151,6 +151,9 @@ async def get_nepse_history() -> list:
             res = supabase.table("daily_ohlcv").select("*, stocks!inner(symbol)").eq("stocks.symbol", "NEPSE").order("date", desc=False).execute()
             if res.data:
                 for r in res.data:
+                    # Sanity Check: Ignore corrupted near-zero or negative prices that break the chart scale
+                    if float(r.get("close") or 0) <= 0 or float(r.get("high") or 0) <= 0 or float(r.get("low") or 0) <= 0 or float(r.get("open") or 0) <= 0:
+                        continue
                     data_map[r["date"]] = {
                         "time": r["date"],
                         "open": float(r.get("open") or 0),
@@ -249,18 +252,24 @@ async def get_live_data(force_refresh: bool = False) -> dict:
     PVH_TTL     = 120.0 if market_open else 3600.0
 
     async def _fetch_if_expired(key, coro_func, ttl):
-        """Helper to fetch and cache data only if expired."""
+        """Helper to fetch and cache data only if expired with automatic retries."""
         if force_refresh or (now - _market_cache[key]["ts"] > ttl):
-            try:
-                # Call the function to get the coroutine ONLY when we need to fetch
-                coro = coro_func() 
-                res = await _safe(coro, timeout=30)
-                if not isinstance(res, Exception):
-                    _market_cache[key]["ts"] = now
-                    _market_cache[key]["data"] = res
-                    return res
-            except Exception as e:
-                logger.debug(f"Cache fetch failed for {key}: {e}")
+            for attempt in range(3): # 3 attempts for robustness
+                try:
+                    # PVH and Summary are heavy, allow more time
+                    timeout_val = 45 if key in ["pvh", "summary"] else 25
+                    res = await asyncio.wait_for(coro_func(), timeout=timeout_val)
+                    
+                    # Basic validation: ensure we got something list-like or dict-like
+                    if _to_list(res) or (isinstance(res, dict) and res):
+                        _market_cache[key]["ts"] = now
+                        _market_cache[key]["data"] = res
+                        return res
+                except Exception as e:
+                    if attempt < 2:
+                        await asyncio.sleep(2) # Backoff before retry
+                        continue
+                    logger.warning(f"Cache fetch failed for {key} after 3 attempts: {e}")
         return _market_cache[key]["data"]
 
     # 1. Fetch components concurrently only if needed
@@ -657,14 +666,24 @@ async def get_stock_chart(symbol: str) -> dict:
             stock_id = stock_res.data[0]["id"]
             ohlcv_res = supabase.table("daily_ohlcv").select("*").eq("stock_id", stock_id).order("date", desc=False).execute()
             if not ohlcv_res.data: return []
-            return [{
-                "time": r["date"],
-                "open": float(r.get("open") or 0),
-                "high": float(r.get("high") or 0),
-                "low": float(r.get("low") or 0),
-                "close": float(r.get("close") or 0),
-                "value": float(r.get("volume") or r.get("total_traded_quantity") or r.get("traded_quantity") or 0),
-            } for r in ohlcv_res.data]
+            
+            clean_db = []
+            for r in ohlcv_res.data:
+                o, h, l, c = [float(r.get(k) or 0) for k in ["open", "high", "low", "close"]]
+                # If all prices are 0 but volume exists, the row is corrupted. 
+                # We skip it so the API fetch logic can "heal" it by downloading fresh data.
+                if o == 0 and h == 0 and l == 0 and c == 0:
+                    continue
+                
+                clean_db.append({
+                    "time": r["date"],
+                    "open": o,
+                    "high": h,
+                    "low": l,
+                    "close": c,
+                    "value": float(r.get("volume") or r.get("total_traded_quantity") or r.get("traded_quantity") or 0),
+                })
+            return clean_db
         except Exception as e:
             logger.error("Supabase data fetch failed: %s", e)
             return []
@@ -675,13 +694,15 @@ async def get_stock_chart(symbol: str) -> dict:
     # 1. Fetch from Supabase first (Highest reliability)
     db_data = await get_db_data(symbol)
     
-    # 2. Resolve security ID from cache (used for some API versions)
+    # 2. Resolve security ID from cache (used for historical API)
     security_id = _symbol_id_cache.get(symbol)
     if not security_id:
         logger.info("ID cache miss for %s — fetching pvh to resolve", symbol)
         try:
+            # Use latest trading date instead of today's date to avoid holiday/closed empty responses
+            latest_trading = get_latest_trading_date()
             pvh = await asyncio.wait_for(
-                nepse.getPriceVolumeHistory(business_date=_today_date()),
+                nepse.getPriceVolumeHistory(business_date=latest_trading),
                 timeout=25,
             )
             for s in _to_list(pvh):
@@ -700,59 +721,66 @@ async def get_stock_chart(symbol: str) -> dict:
         from datetime import datetime, timedelta
         now = datetime.now()
         
-        # If we have DB data, only fetch from the last date onwards to save time/bandwidth
-        # Otherwise fetch the last 6 years in chunks
+        # Incremental fetch strategy
         if db_data:
             last_date_str = db_data[-1]["time"]
             last_dt = datetime.strptime(last_date_str, "%Y-%m-%d")
-            # Overlap by 5 days to ensure no gaps from weekends/holidays
-            start_dt = last_dt - timedelta(days=5)
+            start_dt = last_dt - timedelta(days=5) # 5-day overlap
             chunks = [(start_dt, now)]
-            logger.info("Deep Analysis: Using DB history for %s, fetching only from %s from API", symbol, start_dt.strftime("%Y-%m-%d"))
         else:
+            # Full historical fetch (6 years in chunks)
             chunks = [
                 (now - timedelta(days=365*2), now),
                 (now - timedelta(days=365*4), now - timedelta(days=365*2 + 1)),
                 (now - timedelta(days=365*6), now - timedelta(days=365*4 + 1)),
             ]
         
-        for start_dt, end_dt in chunks:
-            s_str = start_dt.strftime("%Y-%m-%d")
-            e_str = end_dt.strftime("%Y-%m-%d")
-            
-            # Try fetching by Symbol first, then by ID as fallback
-            chart_raw = None
-            for identifier in [symbol, security_id]:
-                if not identifier: continue
-                try:
-                    chart_raw = await asyncio.wait_for(
-                        nepse.getCompanyPriceVolumeHistory(identifier, start_date=s_str, end_date=e_str),
-                        timeout=15,
-                    )
-                    if _to_list(chart_raw): break
-                except: continue
-            
-            rows = _to_list(chart_raw)
-            if not rows: continue
-            
-            for row in rows:
-                if not isinstance(row, dict): continue
-                date_str = (row.get("businessDate") or row.get("date") or row.get("tradeDate") or "")[:10]
-                if not date_str: continue
-                api_data.append({
-                    "time":  date_str,
-                    "open":  _g(row, "openPrice", "open", "todayOpen"),
-                    "high":  _g(row, "highPrice", "high", "todayHigh"),
-                    "low":   _g(row, "lowPrice",  "low",  "todayLow"),
-                    "close": _g(row, "closePrice", "close", "lastTradedPrice"),
-                    "value": _g(row, "totalTradedQuantity", "totalTradeQuantity", "tradedQuantity", "volume", t=float),
-                })
-            
-            if len(chunks) > 1:
-                await asyncio.sleep(0.5)
+        async def fetch_api_chunks(active_chunks):
+            results = []
+            for start_dt, end_dt in active_chunks:
+                s_str = start_dt.strftime("%Y-%m-%d")
+                e_str = end_dt.strftime("%Y-%m-%d")
+                
+                chart_raw = None
+                # Historical API works best with numeric security_id
+                identifiers = [security_id, symbol] if security_id else [symbol]
+                
+                for identifier in identifiers:
+                    if not identifier: continue
+                    try:
+                        chart_raw = await asyncio.wait_for(
+                            nepse.getCompanyPriceVolumeHistory(identifier, start_date=s_str, end_date=e_str),
+                            timeout=15,
+                        )
+                        if _to_list(chart_raw): break
+                    except: continue
+                
+                rows = _to_list(chart_raw)
+                for row in rows:
+                    if not isinstance(row, dict): continue
+                    date_str = (row.get("businessDate") or row.get("date") or row.get("tradeDate") or "")[:10]
+                    if not date_str: continue
+                    results.append({
+                        "time":  date_str,
+                        "open":  _g(row, "openPrice", "open", "todayOpen"),
+                        "high":  _g(row, "highPrice", "high", "todayHigh"),
+                        "low":   _g(row, "lowPrice",  "low",  "todayLow"),
+                        "close": _g(row, "closePrice", "close", "lastTradedPrice"),
+                        "value": _g(row, "totalTradedQuantity", "totalTradeQuantity", "tradedQuantity", "volume", t=float),
+                    })
+            return results
+
+        api_data = await fetch_api_chunks(chunks)
+        
+        # Proactive Deep History: If we have very little history (< 2 years / 500 trading days),
+        # try to fetch a massive 3-year block to populate the database.
+        if len(db_data) < 500:
+            logger.info("Insufficient local history for %s (%d days). Triggering 3-year deep history fetch.", symbol, len(db_data))
+            full_chunks = [(now - timedelta(days=365*3), now)]
+            api_data = await fetch_api_chunks(full_chunks)
 
     except Exception as e:
-        logger.warning("Iterative API chart fetch for %s failed: %s", symbol, e)
+        logger.warning("Historical API chart fetch for %s failed: %s", symbol, e)
 
     # 3.5 Write-Through Cache: Save new API data back to Supabase
     if api_data:
@@ -793,25 +821,124 @@ async def get_stock_chart(symbol: str) -> dict:
         
     final_data = sorted(merged_map.values(), key=lambda d: d["time"])
 
-    # 4. Post-process (Fix missing open prices)
-    # NEPSE company history endpoint often omits openPrice
-    # We approximate it using the previous day's close
-    for i in range(len(final_data)):
-        if final_data[i]["open"] == 0:
-            if i > 0 and final_data[i-1]["close"] > 0:
-                final_data[i]["open"] = final_data[i-1]["close"]
-            else:
-                final_data[i]["open"] = final_data[i]["close"]
+    # ── Professional Data Processing ──────────────────────────────────────────
+    try:
+        from database.import_history import import_and_clean_history
+        from app.indicators import add_indicators
         
-        # Ensure high/low are valid relative to open/close
-        final_data[i]["high"] = max(final_data[i]["high"], final_data[i]["open"], final_data[i]["close"])
-        if final_data[i]["low"] == 0:
-             final_data[i]["low"] = min(final_data[i]["open"], final_data[i]["close"])
+        # Heal Open=0 using PREVIOUS DAY'S CLOSE (not current close!).
+        # Using current close makes open==close → always a doji → always green.
+        # Using prev close correctly shows red candles on down days.
+        prev_close = 0
+        for d in final_data:
+            c = d.get("close", 0)
+            if d.get("open", 0) == 0:
+                # Use previous close if available, otherwise fall back to current close
+                d["open"] = prev_close if prev_close > 0 else c
+            if c > 0:
+                prev_close = c
+        
+        # Build a DataFrame for indicators — but we keep ALL rows for chart display
+        df_cleaned = import_and_clean_history(symbol, final_data)
+        
+        if len(df_cleaned) >= 15:
+            df_indicators = add_indicators(df_cleaned)
+            # Build a lookup: date string → indicator row
+            ind_map = {}
+            for _, row in df_indicators.iterrows():
+                d_str = row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"])[:10]
+                ind_map[d_str] = row
         else:
-             final_data[i]["low"] = min(final_data[i]["low"], final_data[i]["open"], final_data[i]["close"])
+            ind_map = {}
+        
+        # Re-format: use ALL original rows (no rows dropped), attach indicators where available
+        processed_chart = []
+        for d in final_data:
+            d_str = d.get("time", "")[:10]
+            row = ind_map.get(d_str)
+            entry = {
+                "time":  d_str,
+                "open":  round(float(d.get("open", 0)), 2),
+                "high":  round(float(d.get("high", 0)), 2),
+                "low":   round(float(d.get("low", 0)), 2),
+                "close": round(float(d.get("close", 0)), 2),
+                "value": round(float(d.get("value", 0)), 2),
+                # Indicators — 0 for early warmup rows that don't have them yet
+                "rsi":        round(float(row.get("RSI", 0)), 2) if row is not None else 0,
+                "macd":       round(float(row.get("MACD", 0)), 3) if row is not None else 0,
+                "macd_signal":round(float(row.get("MACD_signal", 0)), 3) if row is not None else 0,
+                "macd_hist":  round(float(row.get("MACD_diff", 0)), 3) if row is not None else 0,
+                "ema9":       round(float(row.get("EMA_9", 0)), 2) if row is not None else 0,
+                "ema21":      round(float(row.get("EMA_21", 0)), 2) if row is not None else 0,
+                "ma50":       round(float(row.get("MA_50", 0)), 2) if row is not None else 0,
+                "ma200":      round(float(row.get("MA_200", 0)), 2) if row is not None else 0,
+                "bb_upper":   round(float(row.get("BB_High", 0)), 2) if row is not None else 0,
+                "bb_lower":   round(float(row.get("BB_Low", 0)), 2) if row is not None else 0,
+            }
+            processed_chart.append(entry)
+        
+        final_data = processed_chart
+        logger.info(f"Chart processed: {len(final_data)} rows preserved for {symbol} (indicators synced where available)")
+        
+    except Exception as e:
+        logger.error(f"Indicator Synchronization failed for {symbol}: {e}")
 
-    logger.info("Successfully merged data for %s: %d total rows", symbol, len(final_data))
-    return {"symbol": symbol, "chart_data": final_data, "count": len(final_data)}
+
+    # 5. Price-Healing Logic: Fill zero prices, fix OHLC consistency, remove only truly corrupt rows
+    cleaned_data = []
+    
+    # ── Pass 1: Collect valid closes for median-based outlier detection ──────
+    valid_closes = [d.get("close", 0) for d in final_data if d.get("close", 0) > 0]
+    median_close = float(sorted(valid_closes)[len(valid_closes) // 2]) if valid_closes else 0
+
+    # ── Pass 2: Forward-fill zero closes from last valid close ───────────────
+    last_valid_close = 0
+    for d in final_data:
+        c = d.get("close", 0)
+        if c > 0:
+            last_valid_close = c
+        elif last_valid_close > 0:
+            d["close"] = last_valid_close  # heal: fill with last known price
+            c = last_valid_close
+
+    # ── Pass 3: Backward-fill any remaining zero closes (leading rows) ───────
+    last_valid_close = 0
+    for d in reversed(final_data):
+        c = d.get("close", 0)
+        if c > 0:
+            last_valid_close = c
+        elif last_valid_close > 0:
+            d["close"] = last_valid_close
+            c = last_valid_close
+
+    # ── Pass 4: Clean OHLC consistency & remove only genuine outliers ────────
+    prev_c = 0  # track previous close for open-healing
+    for d in final_data:
+        c = d.get("close", 0)
+
+        # Skip truly unrecoverable rows (no price data at all)
+        if c <= 0:
+            continue
+
+        # Only drop rows that are extreme outliers relative to median
+        # (e.g. old pre-split data that wasn't back-adjusted — >95% away from median)
+        if median_close > 0 and c < (median_close * 0.05):
+            continue
+
+        # Heal: If open is still 0, use previous close for correct red/green candle rendering
+        if d.get("open", 0) == 0:
+            d["open"] = prev_c if prev_c > 0 else c
+
+        # Ensure High >= max(Open, Close) and Low <= min(Open, Close)
+        o = d.get("open", c)
+        d["high"] = max(d.get("high", 0), o, c)
+        low_cand  = min(o, c)
+        d["low"]  = min(d.get("low", low_cand), low_cand) if d.get("low", 0) > 0 else low_cand
+
+        cleaned_data.append(d)
+        prev_c = c  # update for next row
+
+    return {"symbol": symbol, "chart_data": cleaned_data, "count": len(cleaned_data)}
 
 
 async def get_live_quote(symbol: str) -> dict:
