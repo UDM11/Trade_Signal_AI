@@ -547,29 +547,45 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
     if len(X_all) < 100:
         raise ValueError("Global model requires at least 100 rows.")
 
+    # ── Chronological split for honest evaluation ──
+    test_size = 0.15 if len(X_all) > 100 else 0.2
+    split = int(len(X_all) * (1 - test_size))
+    
+    X_train, X_test = X_all[:split], X_all[split:]
+    y_train, y_test = y_all[:split], y_all[split:]
+    regimes_train = regimes[:split]
+
+    # Ensure all classes exist in train set
+    missing_classes = set([0, 1, 2]) - set(np.unique(y_train))
+    for mc in missing_classes:
+        X_train = np.vstack([X_train, np.zeros(X_train.shape[1])])
+        y_train = np.append(y_train, mc)
+        regimes_train = np.append(regimes_train, 1)
+
     le = LabelEncoder()
-    y_all_enc = le.fit_transform(y_all)
+    y_train_enc = le.fit_transform(y_train)
+    y_test_enc = le.transform(y_test)
     
     scaler = RobustScaler()
-    X_all_sc = scaler.fit_transform(X_all)
+    X_train_sc = scaler.fit_transform(X_train)
+    X_test_sc = scaler.transform(X_test)
+    
+    X_all_sc = scaler.transform(X_all) # For background data
 
     # 2. Optuna Optimization for each Regime Expert
     regime_experts = {}
     regime_metrics = {}
     
-    for r in np.unique(regimes):
+    for r in np.unique(regimes_train):
         logger.info(f"Training Expert for Regime {r}...")
-        mask = (regimes == r)
+        mask = (regimes_train == r)
         if mask.sum() < 20:
             logger.warning(f"Regime {r} has too little data ({mask.sum()}). Skipping expert.")
             continue
             
-        Xr, yr_global = X_all_sc[mask], y_all_enc[mask]
+        Xr, yr_global = X_train_sc[mask], y_train_enc[mask]
         
         # ── CRITICAL FIX: Re-encode labels for this regime ──────────────────
-        # The global LabelEncoder may have classes [0,1,2] but this regime's
-        # subset may only have [1,2]. XGBoost crashes if classes don't start
-        # from 0. Re-encoding ensures classes are always [0, 1, ...].
         unique_classes = np.unique(yr_global)
         if len(unique_classes) < 2:
             logger.warning(f"Regime {r} has only 1 class — skipping expert (can't train classifier).")
@@ -643,7 +659,7 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
 
     # 3. Transformer Expert (Temporal Analysis)
     logger.info("Training iTransformer Expert...")
-    itran_model = train_itransformer(X_all_sc, y_all_enc)
+    itran_model = train_itransformer(X_train_sc, y_train_enc)
     
     # 4. Global Stacking Ensemble (as fallback or coordinator)
     meta_model = LogisticRegression(class_weight='balanced', random_state=42)
@@ -653,26 +669,49 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
             ('lgb', lgb.LGBMClassifier(n_estimators=200, max_depth=6, random_state=42, verbosity=-1))
         ],
         final_estimator=meta_model,
-        cv=3,   # was 5 — saves 2 full training passes
+        cv=3,
         stack_method='predict_proba',
         n_jobs=-1
     )
-    global_ensemble.fit(X_all_sc, y_all_enc)
+    global_ensemble.fit(X_train_sc, y_train_enc)
 
-    # 4. SHAP Explainer (Global)
-    # Use a background dataset for SHAP (subset of training data)
-    background = X_all_sc[np.random.choice(X_all_sc.shape[0], min(100, X_all_sc.shape[0]), replace=False)]
-    
-    # We'll use the global ensemble for SHAP to avoid regime-switching complexity in explanations
-    # but we can also use a specific expert. Let's use the XGB base for faster SHAP.
-    explainer = shap.TreeExplainer(global_ensemble.named_estimators_['xgb'])
+    # 5. Honest Evaluation on held-out test set
+    if len(X_test_sc) > 0:
+        y_pred = global_ensemble.predict(X_test_sc)
+        honest_acc = accuracy_score(y_test_enc, y_pred)
+        present_labels = list(range(len(le.classes_)))
+        report = classification_report(
+            y_test_enc, y_pred,
+            labels=present_labels,
+            target_names=[str(c) for c in le.classes_],
+            output_dict=True,
+            zero_division=0,
+        )
+    else:
+        honest_acc = 0.0
+        report = {str(c): {'precision': 0, 'recall': 0, 'f1-score': 0, 'support': 0} for c in le.classes_}
 
+    label_map = {str(c): {0: 'SELL', 1: 'HOLD', 2: 'BUY'}.get(c, str(c)) for c in le.classes_}
     metrics = {
-        'accuracy': round(accuracy_score(y_all_enc, global_ensemble.predict(X_all_sc)) * 100, 2),
+        'accuracy': round(honest_acc * 100, 2),
+        'threshold_used': round(threshold * 100, 3),
+        'per_class': {
+            label_map[k]: {
+                'precision': round(v['precision'] * 100, 1),
+                'recall':    round(v['recall']    * 100, 1),
+                'f1':        round(v['f1-score']  * 100, 1),
+                'support':   int(v['support']),
+            }
+            for k, v in report.items() if k in label_map
+        },
         'regime_experts': len(regime_experts),
         'regime_metrics': {str(k): round(v * 100, 2) for k, v in regime_metrics.items()},
         'features_used': len(FEATURES),
     }
+
+    # 6. SHAP Explainer (Global)
+    background = X_train_sc[np.random.choice(X_train_sc.shape[0], min(100, X_train_sc.shape[0]), replace=False)]
+    explainer = shap.TreeExplainer(global_ensemble.named_estimators_['xgb'])
 
     artifacts = {
         'model': global_ensemble,
@@ -807,7 +846,7 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
             pass
 
     # 3. Prediction & Confidence
-    CONFIDENCE_THRESHOLD = 50.0
+    CONFIDENCE_THRESHOLD = 65.0
     pred_enc_idx = int(np.argmax(proba))
     confidence   = round(float(proba[pred_enc_idx] * 100), 2)
     pred_class   = le.inverse_transform([pred_enc_idx])[0]

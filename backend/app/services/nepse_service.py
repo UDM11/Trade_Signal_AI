@@ -233,6 +233,14 @@ _market_cache: dict = {
     "pvh":      {"ts": 0.0, "data": []},
 }
 
+_nepse_semaphore = asyncio.Semaphore(1)
+
+async def _safe_fetch(coro_func):
+    """Serialize NEPSE API calls to avoid httpx connection pool exhaustion and infinite retries."""
+    async with _nepse_semaphore:
+        return await coro_func()
+
+
 async def get_live_data(force_refresh: bool = False) -> dict:
     """
     Optimized live data fetcher. 
@@ -258,7 +266,7 @@ async def get_live_data(force_refresh: bool = False) -> dict:
                 try:
                     # PVH and Summary are heavy, allow more time
                     timeout_val = 45 if key in ["pvh", "summary"] else 25
-                    res = await asyncio.wait_for(coro_func(), timeout=timeout_val)
+                    res = await asyncio.wait_for(_safe_fetch(coro_func), timeout=timeout_val)
                     
                     # Basic validation: ensure we got something list-like or dict-like
                     if _to_list(res) or (isinstance(res, dict) and res):
@@ -269,7 +277,7 @@ async def get_live_data(force_refresh: bool = False) -> dict:
                     if attempt < 2:
                         await asyncio.sleep(2) # Backoff before retry
                         continue
-                    logger.warning(f"Cache fetch failed for {key} after 3 attempts: {e}")
+                    logger.warning(f"Cache fetch failed for {key} after 3 attempts: {type(e).__name__} - {e}")
         return _market_cache[key]["data"]
 
     # 1. Fetch components concurrently only if needed
@@ -702,7 +710,7 @@ async def get_stock_chart(symbol: str) -> dict:
             # Use latest trading date instead of today's date to avoid holiday/closed empty responses
             latest_trading = get_latest_trading_date()
             pvh = await asyncio.wait_for(
-                nepse.getPriceVolumeHistory(business_date=latest_trading),
+                _safe_fetch(lambda: nepse.getPriceVolumeHistory(business_date=latest_trading)),
                 timeout=25,
             )
             for s in _to_list(pvh):
@@ -749,7 +757,7 @@ async def get_stock_chart(symbol: str) -> dict:
                     if not identifier: continue
                     try:
                         chart_raw = await asyncio.wait_for(
-                            nepse.getCompanyPriceVolumeHistory(identifier, start_date=s_str, end_date=e_str),
+                            _safe_fetch(lambda: nepse.getCompanyPriceVolumeHistory(identifier, start_date=s_str, end_date=e_str)),
                             timeout=15,
                         )
                         if _to_list(chart_raw): break

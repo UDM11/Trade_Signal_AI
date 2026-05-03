@@ -20,8 +20,11 @@ class ConnectionManager:
         if self.last_market_data:
             try:
                 await websocket.send_text(json.dumps(self.last_market_data))
+            except RuntimeError as e:
+                # Often raised by FastAPI/Starlette when socket is already closed
+                logger.debug(f"Socket closed before initial snapshot could be sent: {e}")
             except Exception as e:
-                logger.error(f"Error sending initial snapshot: {e}")
+                logger.error(f"Error sending initial snapshot: {type(e).__name__} - {e}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -42,8 +45,11 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_text(message_str)
+            except RuntimeError:
+                # Connection dropped
+                disconnected_sockets.append(connection)
             except Exception as e:
-                logger.error(f"Error broadcasting to socket: {e}")
+                logger.error(f"Error broadcasting to socket: {type(e).__name__} - {e}")
                 disconnected_sockets.append(connection)
                 
         for socket in disconnected_sockets:

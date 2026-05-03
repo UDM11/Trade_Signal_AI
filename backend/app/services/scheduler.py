@@ -833,7 +833,7 @@ async def run_weekly_retraining() -> None:
         if not stocks:
             stocks = live.get("top_turnovers", []) + live.get("top_volumes", [])
             
-        # Select top 25 stocks by volume for training (25 is plenty; 50 adds 2x API time)
+        # Select top 50 stocks by volume for training
         seen = set()
         deduped_stocks = []
         for s in stocks:
@@ -842,7 +842,7 @@ async def run_weekly_retraining() -> None:
                 seen.add(sym)
                 deduped_stocks.append(s)
         
-        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:25]
+        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:50]
         symbols = [s["symbol"] for s in stocks if s.get("symbol")]
         
         _job_status["running"] = True
@@ -876,8 +876,8 @@ async def run_weekly_retraining() -> None:
             symbol, chart = result
             if chart and chart.get("chart_data"):
                 raw_df = _chart_to_df(chart["chart_data"])
-                # Cap to last 500 rows (≈5 years) — plenty for pattern learning, much faster to process
-                raw_df = raw_df.tail(500).reset_index(drop=True)
+                # Use all available historical data from the database
+                # raw_df = raw_df.tail(500).reset_index(drop=True)
                 if len(raw_df) >= 50:
                     try:
                         df = await asyncio.to_thread(add_indicators, raw_df)

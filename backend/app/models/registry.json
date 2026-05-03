@@ -1,17 +1,38 @@
 {
-    "active_model": "model_xgb_20260502_231357.pkl",
+    "active_model": "model_xgb_20260503_114420.pkl",
     "models": [
         {
-            "filename": "model_xgb_20260502_231357.pkl",
-            "date": "2026-05-02T23:13:58.370232",
-            "accuracy": 99.98,
+            "filename": "model_xgb_20260503_114420.pkl",
+            "date": "2026-05-03T11:44:20.475719",
+            "accuracy": 58.94,
             "metrics": {
-                "accuracy": 99.98,
+                "accuracy": 58.94,
+                "threshold_used": 1.5,
+                "per_class": {
+                    "SELL": {
+                        "precision": 56.8,
+                        "recall": 66.1,
+                        "f1": 61.1,
+                        "support": 502
+                    },
+                    "HOLD": {
+                        "precision": 60.9,
+                        "recall": 50.1,
+                        "f1": 55.0,
+                        "support": 457
+                    },
+                    "BUY": {
+                        "precision": 60.0,
+                        "recall": 59.8,
+                        "f1": 59.9,
+                        "support": 507
+                    }
+                },
                 "regime_experts": 3,
                 "regime_metrics": {
-                    "0": 100.0,
-                    "1": 99.36,
-                    "2": 99.3
+                    "0": 98.16,
+                    "1": 99.29,
+                    "2": 100.0
                 },
                 "features_used": 71
             },
