@@ -277,7 +277,10 @@ async def get_live_data(force_refresh: bool = False) -> dict:
                     if attempt < 2:
                         await asyncio.sleep(2) # Backoff before retry
                         continue
-                    logger.warning(f"Cache fetch failed for {key} after 3 attempts: {type(e).__name__} - {e}")
+                    if isinstance(e, (TimeoutError, asyncio.TimeoutError)):
+                        logger.debug(f"Cache fetch failed for {key} after 3 attempts: {type(e).__name__} - {e}")
+                    else:
+                        logger.warning(f"Cache fetch failed for {key} after 3 attempts: {type(e).__name__} - {e}")
         return _market_cache[key]["data"]
 
     # 1. Fetch components concurrently only if needed

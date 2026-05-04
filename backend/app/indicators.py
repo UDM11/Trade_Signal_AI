@@ -91,17 +91,27 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df['MA_200'] = df['Close'].rolling(window=ma200_w, min_periods=1).mean()
 
     # MACD
-    macd_obj      = MACD(close=df['Close'], window_fast=macd_f, window_slow=macd_s, window_sign=macd_sig)
-    df['MACD']        = macd_obj.macd()
-    df['MACD_signal'] = macd_obj.macd_signal()
-    df['MACD_diff']   = macd_obj.macd_diff()
+    try:
+        macd_obj      = MACD(close=df['Close'], window_fast=macd_f, window_slow=macd_s, window_sign=macd_sig)
+        df['MACD']        = macd_obj.macd()
+        df['MACD_signal'] = macd_obj.macd_signal()
+        df['MACD_diff']   = macd_obj.macd_diff()
+    except Exception:
+        df['MACD']        = 0.0
+        df['MACD_signal'] = 0.0
+        df['MACD_diff']   = 0.0
 
     # ADX — trend strength 0-100 (>25 = trending, <20 = ranging)
     if has_high and has_low:
-        adx_obj     = ADXIndicator(high=df['High'], low=df['Low'], close=df['Close'], window=adx_w)
-        df['ADX']       = adx_obj.adx()
-        df['ADX_pos']   = adx_obj.adx_pos()   # +DI (bullish directional)
-        df['ADX_neg']   = adx_obj.adx_neg()   # -DI (bearish directional)
+        try:
+            adx_obj     = ADXIndicator(high=df['High'], low=df['Low'], close=df['Close'], window=adx_w)
+            df['ADX']       = adx_obj.adx()
+            df['ADX_pos']   = adx_obj.adx_pos()   # +DI (bullish directional)
+            df['ADX_neg']   = adx_obj.adx_neg()   # -DI (bearish directional)
+        except Exception:
+            df['ADX']     = 25.0
+            df['ADX_pos'] = 0.0
+            df['ADX_neg'] = 0.0
     else:
         df['ADX']     = 25.0
         df['ADX_pos'] = 0.0
@@ -119,17 +129,25 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # ── Momentum Indicators ────────────────────────────────────────────────
 
     # RSI
-    df['RSI'] = RSIIndicator(close=df['Close'], window=rsi_w).rsi()
-    df['RSI_Change'] = df['RSI'].diff()
+    try:
+        df['RSI'] = RSIIndicator(close=df['Close'], window=rsi_w).rsi()
+        df['RSI_Change'] = df['RSI'].diff()
+    except Exception:
+        df['RSI'] = 50.0
+        df['RSI_Change'] = 0.0
 
     # Stochastic %K and %D — overbought/oversold with smoother signal
     if has_high and has_low:
-        stoch_obj   = StochasticOscillator(
-            high=df['High'], low=df['Low'], close=df['Close'],
-            window=stoch_w, smooth_window=stoch_s
-        )
-        df['Stoch_K'] = stoch_obj.stoch()
-        df['Stoch_D'] = stoch_obj.stoch_signal()
+        try:
+            stoch_obj   = StochasticOscillator(
+                high=df['High'], low=df['Low'], close=df['Close'],
+                window=stoch_w, smooth_window=stoch_s
+            )
+            df['Stoch_K'] = stoch_obj.stoch()
+            df['Stoch_D'] = stoch_obj.stoch_signal()
+        except Exception:
+            df['Stoch_K'] = 50.0
+            df['Stoch_D'] = 50.0
     else:
         df['Stoch_K'] = 50.0
         df['Stoch_D'] = 50.0

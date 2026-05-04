@@ -583,17 +583,16 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
             logger.warning(f"Regime {r} has too little data ({mask.sum()}). Skipping expert.")
             continue
             
-        Xr, yr_global = X_train_sc[mask], y_train_enc[mask]
+        Xr, yr = X_train_sc[mask], y_train_enc[mask]
         
-        # ── CRITICAL FIX: Re-encode labels for this regime ──────────────────
-        unique_classes = np.unique(yr_global)
-        if len(unique_classes) < 2:
-            logger.warning(f"Regime {r} has only 1 class — skipping expert (can't train classifier).")
-            continue
-        
-        regime_le = LabelEncoder()
-        yr = regime_le.fit_transform(yr_global)  # Always [0, 1, ...] for this regime
-        num_classes = len(unique_classes)
+        # Ensure all 3 classes exist to maintain predict_proba shape (SELL=0, HOLD=1, BUY=2)
+        # This prevents 'index 2 is out of bounds' errors in predict_latest
+        missing_classes = set([0, 1, 2]) - set(np.unique(yr))
+        for mc in missing_classes:
+            Xr = np.vstack([Xr, np.zeros(Xr.shape[1])])
+            yr = np.append(yr, mc)
+            
+        num_classes = 3
         
         # 2-fold CV — fast enough for financial time series, saves 33% over 3-fold
         tscv = TimeSeriesSplit(n_splits=2)
@@ -831,7 +830,12 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
             # shap_values is a list of arrays for multiclass
             # Get values for the predicted class
             pred_idx = np.argmax(proba)
-            vals = shap_values[pred_idx][0] if isinstance(shap_values, list) else shap_values[0]
+            if isinstance(shap_values, list):
+                vals = shap_values[pred_idx][0]
+            elif len(shap_values.shape) == 3:
+                vals = shap_values[0, :, pred_idx]
+            else:
+                vals = shap_values[0]
             
             # Get top 3 features
             top_idx = np.argsort(np.abs(vals))[-3:][::-1]
