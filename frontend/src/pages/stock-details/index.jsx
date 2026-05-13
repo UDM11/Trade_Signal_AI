@@ -216,59 +216,65 @@ function ExecutionOverview({ result, sigColor }) {
     );
 }
 
+// Helper to flatten prediction data for instant rendering
+const flattenData = (raw) => {
+    if (!raw) return null;
+    const ai = raw.ai_analysis || {};
+    return {
+        ...raw,
+        prediction:      raw.prediction || raw.signal,
+        confidence:      raw.confidence ?? raw.confidence_score,
+        ideal_entry:     ai.ideal_entry || raw.ideal_entry,
+        entry_zone_low:  ai.entry_zone_low || raw.entry_zone_low,
+        entry_zone_high: ai.entry_zone_high || raw.entry_zone_high,
+        target_price:    ai.target_price || raw.target_price,
+        target_pct:      ai.target_pct || raw.target_pct,
+        target2:         ai.target2 || raw.target2 || raw.target2_price,
+        target2_pct:     ai.target2_pct || raw.target2_pct,
+        stop_loss:       ai.stop_loss || raw.stop_loss,
+        stop_loss_pct:   ai.stop_loss_pct || raw.stop_loss_pct,
+        trailing_stop:   ai.trailing_stop || raw.trailing_stop,
+        risk_reward:     ai.risk_reward || raw.risk_reward,
+        estimated_days:  ai.estimated_days || raw.estimated_days,
+        entry_condition: ai.entry_condition || raw.entry_condition,
+        exit_condition:  ai.exit_condition || raw.exit_condition,
+        risk_note:       ai.risk_note || raw.risk_note,
+        market_structure:ai.market_structure || raw.market_structure,
+        chartData:       raw.chartData || (ai.sparkline ? ai.sparkline.map(v => ({ close: v })) : [])
+    };
+};
+
 export default function StockDetailsPage({ selected: initialSelected, onBack }) {
-    const [selected, setSelected]       = useState(initialSelected);
+    const [selected, setSelected]       = useState(() => flattenData(initialSelected));
     const [syncing, setSyncing]         = useState(false);
     const [analyzing, setAnalyzing]     = useState(false);
-    const [sidebarTab, setSidebarTab]   = useState('analysis');
+    const [sidebarTab, setSidebarTab]   = useState('overview');
     const [mobileTab, setMobileTab]     = useState('chart');
 
     React.useEffect(() => {
         if (!initialSelected?.symbol) return;
         
-        // Deep data extraction from ai_analysis if available
-        const ai = initialSelected.ai_analysis || {};
-        const flattened = {
-            ...initialSelected,
-            prediction:      initialSelected.prediction || initialSelected.signal,
-            confidence:      initialSelected.confidence ?? initialSelected.confidence_score,
-            ideal_entry:     ai.ideal_entry || initialSelected.ideal_entry,
-            entry_zone_low:  ai.entry_zone_low || initialSelected.entry_zone_low,
-            entry_zone_high: ai.entry_zone_high || initialSelected.entry_zone_high,
-            target_price:    ai.target_price || initialSelected.target_price,
-            target_pct:      ai.target_pct || initialSelected.target_pct,
-            target2:         ai.target2 || initialSelected.target2 || initialSelected.target2_price,
-            target2_pct:     ai.target2_pct || initialSelected.target2_pct,
-            stop_loss:       ai.stop_loss || initialSelected.stop_loss,
-            stop_loss_pct:   ai.stop_loss_pct || initialSelected.stop_loss_pct,
-            trailing_stop:   ai.trailing_stop || initialSelected.trailing_stop,
-            risk_reward:     ai.risk_reward || initialSelected.risk_reward,
-            estimated_days:  ai.estimated_days || initialSelected.estimated_days,
-            entry_condition: ai.entry_condition || initialSelected.entry_condition,
-            exit_condition:  ai.exit_condition || initialSelected.exit_condition,
-            risk_note:       ai.risk_note || initialSelected.risk_note,
-            market_structure:ai.market_structure || initialSelected.market_structure,
-        };
-        setSelected(flattened);
+        // Update basic info instantly if it changed
+        setSelected(flattenData(initialSelected));
 
+        // Background sync for full chart history
         const sync = async () => {
             setSyncing(true);
             try {
                 const { api } = await import('../../api');
                 const res = await api.getNepseChart(initialSelected.symbol);
                 const fullData = res.data.chart_data || [];
-                setSelected(prev => ({
-                    ...prev,
-                    chartData: fullData.length > 0 ? fullData : (prev.chartData || [])
-                }));
+                if (fullData.length > 0) {
+                    setSelected(prev => ({ ...prev, chartData: fullData }));
+                }
             } catch (e) {
-                console.error('Failed to sync chart history', e);
+                console.error('Background sync failed:', e);
             } finally {
                 setSyncing(false);
             }
         };
         sync();
-    }, [initialSelected]);
+    }, [initialSelected?.symbol]);
 
     const handleDeepAnalysis = async () => {
         if (analyzing) return;

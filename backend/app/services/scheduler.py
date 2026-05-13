@@ -221,8 +221,9 @@ async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> No
             if df is not None and not df.empty:
                 try:
                     ohlcv_batch = []
-                    # Sync more rows to support long-term history (up to ~10 years)
-                    sync_df = df.tail(2500) 
+                    # Sync only enough rows to support indicators and recent history (last 2 years/500 days)
+                    # Syncing 2500 rows for 400 stocks per day is a massive ingress/egress waste.
+                    sync_df = df.tail(500) 
                     for _, row in sync_df.iterrows():
                         d_str = row["Date"].strftime("%Y-%m-%d") if hasattr(row["Date"], "strftime") else str(row["Date"])[:10]
                         ohlcv_batch.append({
@@ -262,11 +263,16 @@ async def _save_to_db(symbol: str, payload: dict, df: pd.DataFrame = None) -> No
                     perm_history = perm_history[-1000:]
 
             # Update the latest prediction record
-            payload["signal_history"] = perm_history # Override with the real persistent history
+            # BANDWIDTH OPTIMIZATION: Do NOT store chart_data and signal_history in the predictions table.
+            # They are redundant (chart is in daily_ohlcv) and cause massive Egress quota usage.
+            db_payload = payload.copy()
+            db_payload.pop("chart_data", None)
+            db_payload.pop("signal_history", None)
+            
             if existing_pred.data:
-                supabase.table("predictions").update(payload).eq("stock_id", stock_id).execute()
+                supabase.table("predictions").update(db_payload).eq("stock_id", stock_id).execute()
             else:
-                supabase.table("predictions").insert({"stock_id": stock_id, **payload}).execute()
+                supabase.table("predictions").insert({"stock_id": stock_id, **db_payload}).execute()
         except Exception as e:
             logger.error("[%s] Supabase save failed: %s", symbol, e)
 
@@ -442,6 +448,8 @@ async def _predict_one(symbol: str, artifacts: dict = None, force_ai: bool = Fal
                 "fibonacci":         calculate_fibonacci(df),
                 "weekly_confluence": weekly_confluence,
                 "sector_alignment":  sector_alignment,
+                "latest_close":      last_close,
+                "sparkline":         [float(row.get("close", 0)) for row in chart_data[-30:]] if chart_data else []
             },
             "chart_data":    chart_data,
             "signal_history": signal_history,

@@ -45,7 +45,8 @@ function buildResult(record) {
         target2:           ai.target2              ?? null,
         trailing_stop:     ai.trailing_stop        ?? null,
         signal_history:    record.signal_history   || [],
-        chartData:         record.chart_data       || [],
+        chartData:         record.chart_data       || (ai.sparkline ? ai.sparkline.map(v => ({ close: v })) : []),
+        latest_close:      ai.latest_close         || (record.chart_data?.length ? record.chart_data[record.chart_data.length - 1]?.close : null),
         backtest:          record.backtest         || record.backtest_stats || null
     };
 }
@@ -136,14 +137,14 @@ function FilterPanel({ filters, setFilters, counts, onReset }) {
 import { SignalProbaStrip } from '../components/history/HistoryComponents';
 
 // ── Heatmap Block ─────────────────────────────────────────────────────────────
-function HeatmapBlock({ r, onClick }) {
+const HeatmapBlock = React.memo(({ r, onClick }) => {
     const sig = SIG[r.prediction] || SIG.HOLD;
     const conf = +(r.confidence_score ?? 0);
     const sym = r.stocks?.symbol || r.symbol || '?';
 
     return (
         <button onClick={() => onClick(r)}
-            className="group relative rounded-xl sm:rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-3.5 text-center aspect-square sm:aspect-auto sm:h-36"
+            className="group relative rounded-xl sm:rounded-2xl overflow-hidden transition-all duration-500 hover:-translate-y-1 hover:shadow-[0_15px_40px_rgba(0,0,0,0.5)] flex flex-col items-center justify-center p-3.5 text-center aspect-square sm:aspect-auto sm:h-36 animate-in fade-in zoom-in-95"
             style={{
                 background: 'rgba(8, 15, 26, 0.4)',
                 border: `1px solid ${sig.borderC}`,
@@ -163,19 +164,19 @@ function HeatmapBlock({ r, onClick }) {
             </div>
         </button>
     );
-}
+});
 
 // ── Table Row ─────────────────────────────────────────────────────────────────
-function TableRow({ r, rank, onSelect }) {
+const TableRow = React.memo(({ r, rank, onSelect }) => {
     const sig = SIG[r.prediction] || SIG.HOLD;
     const sym = r.stocks?.symbol || r.symbol || '?';
     const conf = +(r.confidence_score ?? 0);
     const rr = r.risk_reward;
     const rrColor = rr >= 2 ? 'text-buy' : rr >= 1 ? 'text-hold' : 'text-sell';
-    const latestClose = r.chart_data?.length ? r.chart_data[r.chart_data.length - 1]?.close : null;
+    const latestClose = r.latest_close;
 
     return (
-        <tr className="border-b transition-all cursor-pointer group hover:bg-white/[0.03]"
+        <tr className="border-b transition-all cursor-pointer group hover:bg-white/[0.03] animate-in slide-in-from-right-4 fade-in duration-300"
             style={{ borderColor: 'rgba(255, 255, 255, 0.05)' }}
             onClick={() => onSelect(r)}>
             <td className="px-1.5 sm:px-5 py-3 sm:py-5 text-[9px] sm:text-[10px] font-black text-slate-600 tabular-nums">{rank}</td>
@@ -235,6 +236,28 @@ function TableRow({ r, rank, onSelect }) {
             </td>
         </tr>
     );
+});
+
+// ── Skeleton Loader ───────────────────────────────────────────────────────────
+function TableSkeleton() {
+    return (
+        <div className="rounded-xl overflow-hidden space-y-px animate-pulse bg-white/5">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(i => (
+                <div key={i} className="flex items-center gap-4 px-6 py-5 border-b border-white/5">
+                    <div className="w-4 h-4 bg-white/5 rounded" />
+                    <div className="w-1 h-8 bg-white/5 rounded-full" />
+                    <div className="flex-1 space-y-2">
+                        <div className="w-24 h-4 bg-white/5 rounded" />
+                        <div className="w-16 h-3 bg-white/5 rounded opacity-50" />
+                    </div>
+                    <div className="w-20 h-8 bg-white/5 rounded-lg" />
+                    <div className="hidden lg:block w-32 h-10 bg-white/5 rounded" />
+                    <div className="w-16 h-5 bg-white/5 rounded" />
+                    <div className="w-8 h-8 bg-white/5 rounded-full" />
+                </div>
+            ))}
+        </div>
+    );
 }
 
 // ── Sort icon (outside component so React doesn't remount it every render) ────
@@ -255,6 +278,7 @@ export default function ScreenerPage({ onSelectStock }) {
     const [view, setView]             = useState('table');
     const [showFilters, setShowFilters] = useState(true);
     const [selected, setSelected]     = useState(null);
+    const [displayLimit, setDisplayLimit] = useState(30); // Pagination for performance
 
     const handleSelect = (record) => {
         const sym = record.stocks?.symbol || record.symbol || 'UNKNOWN';
@@ -356,13 +380,15 @@ export default function ScreenerPage({ onSelectStock }) {
         );
     }
 
-    if (loading) {
+    if (loading && !records.length) {
         return (
-            <main className="max-w-[1600px] mx-auto p-2.5 sm:p-8 space-y-6 sm:space-y-10 animate-pulse">
-                <div className="h-32 sm:h-44 bg-white/5 rounded-2xl sm:rounded-3xl w-full" />
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 sm:gap-8">
-                    <div className="h-64 lg:h-[500px] bg-white/5 rounded-2xl sm:rounded-3xl" />
-                    <div className="lg:col-span-3 h-64 lg:h-[500px] bg-white/5 rounded-2xl sm:rounded-3xl" />
+            <main className="max-w-[1600px] mx-auto p-4 sm:p-8 space-y-6 sm:space-y-10">
+                <div className="h-44 bg-white/5 rounded-3xl w-full animate-pulse" />
+                <div className="flex flex-col lg:flex-row gap-8">
+                    <div className="w-72 h-[500px] bg-white/5 rounded-2xl animate-pulse hidden lg:block" />
+                    <div className="flex-1">
+                        <TableSkeleton />
+                    </div>
                 </div>
             </main>
         );
@@ -384,8 +410,13 @@ export default function ScreenerPage({ onSelectStock }) {
                                 placeholder="Search symbol..."
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                className="w-full bg-white/5 border border-white/10 rounded-lg sm:rounded-xl py-1.5 sm:py-2.5 pl-10 sm:pl-14 pr-6 text-xs sm:text-base font-bold text-white outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all placeholder:text-slate-600 shadow-inner"
+                                className="w-full bg-white/5 border border-white/10 rounded-lg sm:rounded-xl py-1.5 sm:py-2.5 pl-10 sm:pl-14 pr-10 text-xs sm:text-base font-bold text-white outline-none focus:border-blue-500/50 focus:bg-white/10 transition-all placeholder:text-slate-600 shadow-inner"
                             />
+                            {search && (
+                                <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 hover:bg-white/10 rounded-full transition-colors">
+                                    <X className="w-3 h-3 text-slate-500" />
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -516,11 +547,21 @@ export default function ScreenerPage({ onSelectStock }) {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-white/5">
-                                        {filtered.map((r, i) => (
+                                        {filtered.slice(0, displayLimit).map((r, i) => (
                                             <TableRow key={r.id} r={r} rank={i + 1} onSelect={handleSelect} />
                                         ))}
                                     </tbody>
                                 </table>
+                                {filtered.length > displayLimit && (
+                                    <div className="p-8 flex justify-center">
+                                        <button 
+                                            onClick={() => setDisplayLimit(prev => prev + 50)}
+                                            className="px-8 py-3 rounded-xl bg-blue-600 text-white font-black text-xs uppercase tracking-[0.2em] shadow-xl shadow-blue-600/20 hover:scale-105 transition-all"
+                                        >
+                                            Show More Signals
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                             
                             {/* Pro Bottom Navigation */}

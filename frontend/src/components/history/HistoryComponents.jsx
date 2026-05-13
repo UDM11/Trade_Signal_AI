@@ -119,9 +119,12 @@ export function HistoryCard({ record, onClick }) {
     const conf   = Number(record.confidence_score ?? record.confidence ?? 0);
     const symbol = record.stocks?.symbol || record.symbol || 'UNKNOWN';
 
-    const latestClose = record.chart_data?.length
+    const ai = record.ai_analysis || {};
+    const latestClose = ai.latest_close || (record.chart_data?.length
         ? record.chart_data[record.chart_data.length - 1]?.close
-        : null;
+        : null);
+    
+    const sparkData = record.chart_data || (ai.sparkline ? ai.sparkline.map(v => ({ close: v })) : []);
 
     const fmtPrice = (v) => v != null
         ? `Rs. ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -207,7 +210,7 @@ export function HistoryCard({ record, onClick }) {
                             </div>
                         )}
                         <div className="hidden md:block opacity-70 group-hover:opacity-100 transition-opacity">
-                            <MiniSparkline chartData={record.chart_data} signal={record.prediction} />
+                            <MiniSparkline chartData={sparkData} signal={record.prediction} />
                         </div>
                         <div
                             className="flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg sm:rounded-xl border text-[8px] sm:text-[10px] font-black tracking-widest sm:tracking-[0.15em] transition-all group-hover:scale-105"

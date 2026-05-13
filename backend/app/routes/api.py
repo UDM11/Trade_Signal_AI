@@ -358,8 +358,10 @@ async def get_predictions():
     supabase = get_supabase()
     if supabase:
         try:
+            # Bandwidth Optimization: Exclude chart_data and signal_history from the list view.
+            # These fields are huge and consume massive egress quota.
             res = supabase.table("predictions").select(
-                "id, prediction, confidence_score, explanation, target_price, stop_loss, estimated_days, target_pct, stop_loss_pct, risk_reward, all_proba, indicators, model_metrics, ai_analysis, chart_data, signal_history, backtest_stats, created_at, stocks(symbol)"
+                "id, prediction, confidence_score, explanation, target_price, stop_loss, estimated_days, target_pct, stop_loss_pct, risk_reward, all_proba, indicators, model_metrics, ai_analysis, backtest_stats, created_at, stocks(symbol)"
             ).order("created_at", desc=True).execute()
             return {"data": res.data}
         except Exception as e:
@@ -367,6 +369,10 @@ async def get_predictions():
 
     # Local fallback
     records = _load_local_history()
+    # Also strip heavy fields from local history for consistency
+    for r in records:
+        r.pop("chart_data", None)
+        r.pop("signal_history", None)
     return {"data": records}
 
 

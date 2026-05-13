@@ -1,9 +1,12 @@
 import { api } from '../api';
 
-const STALE_MS = 30_000;
+const STALE_MS  = 30_000;
+const CACHE_KEY = 'ts_predictions_cache';
 
-let _data      = null;
-let _fetchedAt = 0;
+// Load initial data from LocalStorage for instant-on experience
+const _cached = localStorage.getItem(CACHE_KEY);
+let _data      = _cached ? JSON.parse(_cached) : null;
+let _fetchedAt = _cached ? Date.now() : 0; // Assume fresh on first load if we have cache
 let _inflight  = null;
 
 /** Cached data — null on first ever load */
@@ -20,8 +23,17 @@ export function fetchPredictions() {
     if (_inflight) return _inflight;
     _inflight = api.getHistory()
         .then(res => {
-            _data      = res.data.data || [];
+            const data = res.data.data || [];
+            _data      = data;
             _fetchedAt = Date.now();
+            
+            // Persist for instant-on next time
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+            } catch (e) {
+                console.warn('Cache persistence failed:', e);
+            }
+            
             return _data;
         })
         .finally(() => { _inflight = null; });
@@ -29,4 +41,7 @@ export function fetchPredictions() {
 }
 
 /** Force-invalidate so next call always fetches fresh */
-export const invalidate = () => { _fetchedAt = 0; };
+export const invalidate = () => { 
+    _fetchedAt = 0; 
+    localStorage.removeItem(CACHE_KEY);
+};

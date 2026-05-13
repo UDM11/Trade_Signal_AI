@@ -675,11 +675,22 @@ async def get_stock_chart(symbol: str) -> dict:
             stock_res = supabase.table("stocks").select("id").eq("symbol", sym).execute()
             if not stock_res.data: return []
             stock_id = stock_res.data[0]["id"]
-            ohlcv_res = supabase.table("daily_ohlcv").select("*").eq("stock_id", stock_id).order("date", desc=False).execute()
+            # Optimized: Only fetch the last 2 years (730 days) of history.
+            # Fetching 10+ years for every chart request is what kills the egress quota.
+            ohlcv_res = supabase.table("daily_ohlcv")\
+                .select("*")\
+                .eq("stock_id", stock_id)\
+                .order("date", desc=True)\
+                .limit(730)\
+                .execute()
+            
             if not ohlcv_res.data: return []
             
+            # Sort back to ascending for technical indicators
+            data = sorted(ohlcv_res.data, key=lambda x: x["date"])
+            
             clean_db = []
-            for r in ohlcv_res.data:
+            for r in data:
                 o, h, l, c = [float(r.get(k) or 0) for k in ["open", "high", "low", "close"]]
                 # If all prices are 0 but volume exists, the row is corrupted. 
                 # We skip it so the API fetch logic can "heal" it by downloading fresh data.
