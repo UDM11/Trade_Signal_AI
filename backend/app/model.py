@@ -1,4 +1,6 @@
 import warnings
+import logging
+logger = logging.getLogger(__name__)
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import (
@@ -15,13 +17,13 @@ import os
 import glob
 from datetime import datetime
 import xgboost as xgb
+# pyrefly: ignore [missing-import]
 import lightgbm as lgb
-import optuna
-import shap
+# Heavy libraries (shap, optuna, GaussianMixture) are imported lazily 
+# to optimize the FastAPI application startup time on remote servers.
+# Note: torch is imported at module level to allow global iTransformer class definition for pickling.
 import torch
 import torch.nn as nn
-from sklearn.mixture import GaussianMixture
-
 import json
 
 # ── Suppress sklearn feature-name mismatch warnings ──────────────────────────
@@ -66,7 +68,39 @@ def _save_registry(registry: dict):
     except Exception:
         pass
 
+class iTransformer(nn.Module):
+    """
+    Simplified iTransformer-inspired architecture for time-series.
+    Inverts dimensions to apply attention across the feature dimension.
+    """
+    def __init__(self, num_features, seq_len, d_model=64, n_heads=4, num_layers=2):
+        super().__init__()
+        self.seq_len = seq_len
+        self.feature_embedding = nn.Linear(seq_len, d_model)
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=n_heads, 
+            dim_feedforward=d_model * 4,
+            batch_first=True,
+            dropout=0.1
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.output_layer = nn.Linear(num_features * d_model, 3)
+        
+    def forward(self, x):
+        x = x.permute(0, 2, 1)
+        x = self.feature_embedding(x)
+        x = self.transformer(x)
+        x = x.reshape(x.size(0), -1)
+        return self.output_layer(x)
+
+def _init_itransformer():
+    # Keep function signature as it is called elsewhere, but make it a no-op
+    pass
+
 def _get_latest_model_path() -> str:
+    _init_itransformer()
     registry = _load_registry()
     active   = registry.get("active_model")
     
@@ -197,6 +231,7 @@ def detect_regimes(df: pd.DataFrame, n_regimes: int = 3) -> pd.DataFrame:
     Uses Gaussian Mixture Model to classify market into regimes.
     Returns the dataframe with a 'Market_Regime' column.
     """
+    from sklearn.mixture import GaussianMixture
     df = df.copy()
     # Use Volatility, Returns, and ADX as regime indicators
     regime_feats = ['Volatility', 'Price_Change_Pct', 'ADX']
@@ -223,46 +258,14 @@ def detect_regimes(df: pd.DataFrame, n_regimes: int = 3) -> pd.DataFrame:
         
     return df
 
-class iTransformer(nn.Module):
-    """
-    Simplified iTransformer-inspired architecture for time-series.
-    Inverts dimensions to apply attention across the feature dimension.
-    """
-    def __init__(self, num_features, seq_len, d_model=64, n_heads=4, num_layers=2):
-        super().__init__()
-        self.seq_len = seq_len
-        self.feature_embedding = nn.Linear(seq_len, d_model)
-        
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, 
-            nhead=n_heads, 
-            dim_feedforward=d_model * 4,
-            batch_first=True,
-            dropout=0.1
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-        
-        self.output_layer = nn.Linear(num_features * d_model, 3) # 3 classes: SELL, HOLD, BUY
-        
-    def forward(self, x):
-        # x shape: (batch, seq_len, num_features)
-        # iTransformer: invert to (batch, num_features, seq_len)
-        x = x.permute(0, 2, 1)
-        
-        # Embed time dimension
-        x = self.feature_embedding(x) # (batch, num_features, d_model)
-        
-        # Transformer attention across features
-        x = self.transformer(x) # (batch, num_features, d_model)
-        
-        # Flatten and predict
-        x = x.reshape(x.size(0), -1)
-        return self.output_layer(x)
-
 def train_itransformer(X_sc, y_enc, seq_len=10, epochs=20, lr=0.001):
     """
     Trains the iTransformer model on provided scaled features and encoded labels.
     """
+    _init_itransformer()
+    import torch
+    import torch.nn as nn
+    
     num_features = X_sc.shape[1]
     
     # Create sequences
@@ -524,6 +527,9 @@ def tune_and_train_global_model(df: pd.DataFrame) -> dict:
     """
     import logging
     logger = logging.getLogger(__name__)
+    _init_itransformer()
+    import optuna
+    import shap
 
     # 1. Regime Detection
     df = detect_regimes(df)
@@ -813,6 +819,7 @@ def predict_latest(df: pd.DataFrame, artifacts: dict = None):
             itran = artifacts['itran_model']
             itran.eval()
             seq = scaler.transform(_safe_float_array(df.iloc[-10:][features]))
+            import torch
             seq_t = torch.FloatTensor(seq).unsqueeze(0)
             with torch.no_grad():
                 it_out = torch.softmax(itran(seq_t), dim=1).numpy()[0]

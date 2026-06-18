@@ -1,5 +1,5 @@
 {
-    "active_model": "model_xgb_20260508_170034.pkl",
+    "active_model": "model_xgb_20260618_224902.pkl",
     "models": [
         {
             "filename": "model_xgb_20260504_184316.pkl",
@@ -70,6 +70,80 @@
                     "0": 100.0,
                     "1": 100.0,
                     "2": 99.95
+                },
+                "features_used": 71
+            },
+            "status": "active"
+        },
+        {
+            "filename": "model_xgb_20260513_233014.pkl",
+            "date": "2026-05-13T23:30:14.822058",
+            "accuracy": 56.48,
+            "metrics": {
+                "accuracy": 56.48,
+                "threshold_used": 1.5,
+                "per_class": {
+                    "SELL": {
+                        "precision": 57.1,
+                        "recall": 59.5,
+                        "f1": 58.3,
+                        "support": 551
+                    },
+                    "HOLD": {
+                        "precision": 56.9,
+                        "recall": 52.7,
+                        "f1": 54.7,
+                        "support": 499
+                    },
+                    "BUY": {
+                        "precision": 55.4,
+                        "recall": 56.9,
+                        "f1": 56.1,
+                        "support": 517
+                    }
+                },
+                "regime_experts": 3,
+                "regime_metrics": {
+                    "0": 99.95,
+                    "1": 99.14,
+                    "2": 99.6
+                },
+                "features_used": 71
+            },
+            "status": "active"
+        },
+        {
+            "filename": "model_xgb_20260618_224902.pkl",
+            "date": "2026-06-18T22:49:03.391421",
+            "accuracy": 59.39,
+            "metrics": {
+                "accuracy": 59.39,
+                "threshold_used": 1.5,
+                "per_class": {
+                    "SELL": {
+                        "precision": 67.2,
+                        "recall": 56.3,
+                        "f1": 61.3,
+                        "support": 728
+                    },
+                    "HOLD": {
+                        "precision": 60.9,
+                        "recall": 53.6,
+                        "f1": 57.0,
+                        "support": 569
+                    },
+                    "BUY": {
+                        "precision": 53.0,
+                        "recall": 67.5,
+                        "f1": 59.4,
+                        "support": 683
+                    }
+                },
+                "regime_experts": 3,
+                "regime_metrics": {
+                    "0": 96.43,
+                    "1": 100.0,
+                    "2": 98.36
                 },
                 "features_used": 71
             },

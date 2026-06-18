@@ -1,0 +1,8 @@
+{
+  "appId": "com.tradesignal.ai",
+  "appName": "Trade Signal AI",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

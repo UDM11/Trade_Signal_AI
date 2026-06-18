@@ -6,8 +6,8 @@ from supabase import create_client
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-SYMBOL = "SMHL"           # <-- Change this to the stock symbol (e.g., "NTC")
-FILE_NAME = "SMHL.csv"    # <-- Change this to your CSV filename
+SYMBOL = "HFIN"           # <-- Change this to the stock symbol (e.g., "NTC")
+FILE_NAME = "HFIN.csv"    # <-- Change this to your CSV filename
 # ---------------------
 
 # Load environment variables from backend/.env

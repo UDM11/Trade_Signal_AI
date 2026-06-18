@@ -1,10 +1,11 @@
-app = 'trade-signal-ai'
+app = 'trade-signal-ai-v2'
 primary_region = 'bom'
 
 [build]
 
 [env]
   PORT = "8080"
+  PYTHONUNBUFFERED = "1"
 
 [deploy]
   strategy = "immediate"
