@@ -361,7 +361,7 @@ export default function SignalPage() {
 
                             <div className="flex gap-1.5 w-full sm:w-auto">
                                 <button onClick={handleSyncOHLCV} disabled={running}
-                                    title="Save full OHLCV history (up to 6 years) for all stocks to Supabase"
+                                    title="Sync today's OHLCV data for all stocks to Supabase"
                                     className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 sm:px-5 py-1.5 sm:py-2 rounded-lg border transition-all font-black text-[10px] sm:text-xs uppercase tracking-widest relative overflow-hidden ${
                                         running && currentJobType.current === 'ohlcv_dump'
                                             ? 'bg-emerald-600/10 border-emerald-500/30 text-emerald-400'
