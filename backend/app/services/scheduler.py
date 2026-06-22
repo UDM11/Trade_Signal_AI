@@ -479,6 +479,13 @@ async def run_daily_predictions(symbols: list | None = None) -> dict:
     started = datetime.now(timezone.utc)
 
     try:
+        # ── Ensure today's OHLCV is synced to Supabase (5-10 seconds) ──
+        logger.info("=== Automatically Syncing Today's OHLCV Before Scan ===")
+        try:
+            await run_daily_ohlcv_dump(manual=False)
+        except Exception as e:
+            logger.warning("Auto EOD dump before scan failed: %s", e)
+
         if symbols is None:
             from app.services.nepse_service import get_live_data
             live = await get_live_data()
@@ -850,7 +857,7 @@ async def run_weekly_retraining() -> None:
                 seen.add(sym)
                 deduped_stocks.append(s)
         
-        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:50]
+        stocks = sorted(deduped_stocks, key=lambda s: s.get("volume", 0), reverse=True)[:20]
         symbols = [s["symbol"] for s in stocks if s.get("symbol")]
         
         _job_status["running"] = True

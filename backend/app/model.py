@@ -258,13 +258,14 @@ def detect_regimes(df: pd.DataFrame, n_regimes: int = 3) -> pd.DataFrame:
         
     return df
 
-def train_itransformer(X_sc, y_enc, seq_len=10, epochs=20, lr=0.001):
+def train_itransformer(X_sc, y_enc, seq_len=10, epochs=20, lr=0.001, batch_size=512):
     """
-    Trains the iTransformer model on provided scaled features and encoded labels.
+    Trains the iTransformer model on provided scaled features and encoded labels in mini-batches.
     """
     _init_itransformer()
     import torch
     import torch.nn as nn
+    from torch.utils.data import TensorDataset, DataLoader
     
     num_features = X_sc.shape[1]
     
@@ -277,21 +278,32 @@ def train_itransformer(X_sc, y_enc, seq_len=10, epochs=20, lr=0.001):
     if len(X_seq) < 32:
         return None
         
-    X_seq = torch.FloatTensor(np.array(X_seq))
-    y_seq = torch.LongTensor(np.array(y_seq))
+    X_seq_t = torch.FloatTensor(np.array(X_seq))
+    y_seq_t = torch.LongTensor(np.array(y_seq))
+    
+    dataset = TensorDataset(X_seq_t, y_seq_t)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
     model = iTransformer(num_features, seq_len)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
     
+    # Utilize GPU if available to speed up training
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
     model.train()
     for epoch in range(epochs):
-        optimizer.zero_grad()
-        outputs = model(X_seq)
-        loss = criterion(outputs, y_seq)
-        loss.backward()
-        optimizer.step()
-        
+        for batch_X, batch_y in dataloader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            
+    # Move model back to CPU before returning for pickling/serialization compatibility
+    model.to(torch.device("cpu"))
     return model
 
 def assign_labels(df: pd.DataFrame):
