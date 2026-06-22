@@ -348,13 +348,17 @@ export default function TradingChart({
         }
     }, [tf, symbol, intradayData.length]);
 
+    const cleanData = useMemo(() => {
+        return (data ?? []).filter(d => d && d.time !== undefined && d.time !== null);
+    }, [data]);
+
     const filteredData = useMemo(() => {
         if (tfObj?.type === "intraday") {
             // Only return intraday if we actually have data
             return intradayData.length > 0 ? resampleData(intradayData, tfObj.resample) : [];
         }
-        return filterByDays(data ?? [], tfObj?.days);
-    }, [data, tf, intradayData, tfObj]);
+        return filterByDays(cleanData, tfObj?.days);
+    }, [cleanData, tf, intradayData, tfObj]);
 
     const last = data?.[data.length - 1];
     const prev = data?.[data.length - 2] ?? last;
@@ -656,35 +660,50 @@ export default function TradingChart({
             worker.postMessage({ task: 'CALC_ALL', data: filtered, params: {} });
         };
 
-        if (hasBackendInd) {
-            // Priority 1: Use Backend Pre-Calculated Data (Fastest)
-            if (overlay.sma20)  S.current.sma20.setData(filtered.map(d => ({ time: d.time, value: d.ma20 ?? d.sma20 })));
-            if (overlay.sma50)  S.current.sma50.setData(filtered.map(d => ({ time: d.time, value: d.ma50 })));
-            if (overlay.ema200) S.current.ema200.setData(filtered.map(d => ({ time: d.time, value: d.ma200 })));
-            if (overlay.ema9)   S.current.ema9.setData(filtered.map(d => ({ time: d.time, value: d.ema9 })));
-            if (overlay.ema21)  S.current.ema21.setData(filtered.map(d => ({ time: d.time, value: d.ema21 })));
-            if (overlay.vwap)   S.current.vwap.setData(calcVWAP(filtered));
-            
-            if (overlay.bb) {
-                S.current.bbUp.setData(filtered.map(d => ({ time: d.time, value: d.bb_upper })));
-                S.current.bbMid.setData(filtered.map(d => ({ time: d.time, value: d.ma20 || d.sma20 })));
-                S.current.bbLo.setData(filtered.map(d => ({ time: d.time, value: d.bb_lower })));
-            } else { [S.current.bbUp, S.current.bbMid, S.current.bbLo].forEach(s => s.setData([])); }
+        if (filtered.length > 0) {
+            if (hasBackendInd) {
+                // Priority 1: Use Backend Pre-Calculated Data (Fastest)
+                if (overlay.sma20)  S.current.sma20.setData(filtered.map(d => ({ time: d.time, value: d.ma20 ?? d.sma20 })));
+                if (overlay.sma50)  S.current.sma50.setData(filtered.map(d => ({ time: d.time, value: d.ma50 })));
+                if (overlay.ema200) S.current.ema200.setData(filtered.map(d => ({ time: d.time, value: d.ma200 })));
+                if (overlay.ema9)   S.current.ema9.setData(filtered.map(d => ({ time: d.time, value: d.ema9 })));
+                if (overlay.ema21)  S.current.ema21.setData(filtered.map(d => ({ time: d.time, value: d.ema21 })));
+                if (overlay.vwap)   S.current.vwap.setData(calcVWAP(filtered));
+                
+                if (overlay.bb) {
+                    S.current.bbUp.setData(filtered.map(d => ({ time: d.time, value: d.bb_upper })));
+                    S.current.bbMid.setData(filtered.map(d => ({ time: d.time, value: d.ma20 || d.sma20 })));
+                    S.current.bbLo.setData(filtered.map(d => ({ time: d.time, value: d.bb_lower })));
+                } else { [S.current.bbUp, S.current.bbMid, S.current.bbLo].forEach(s => s.setData([])); }
 
-            if (subInd === "rsi") {
-                const d = filtered.map(v => ({ time: v.time, value: v.rsi }));
-                S.current.rsiLine.setData(d);
-                S.current.rsiOb.setData(d.map(v => ({ time: v.time, value: 70 })));
-                S.current.rsiOs.setData(d.map(v => ({ time: v.time, value: 30 })));
-                S.current.rsiMid.setData(d.map(v => ({ time: v.time, value: 50 })));
-            } else if (subInd === "macd") {
-                S.current.macdLine.setData(filtered.map(v => ({ time: v.time, value: v.macd })));
-                S.current.macdSig.setData(filtered.map(v => ({ time: v.time, value: v.macd_signal })));
-                S.current.macdHist.setData(filtered.map(v => ({ time: v.time, value: v.macd_hist, color: v.macd_hist >= 0 ? "rgba(34,197,94,0.65)" : "rgba(239,68,68,0.65)" })));
+                if (subInd === "rsi") {
+                    const d = filtered.map(v => ({ time: v.time, value: v.rsi }));
+                    S.current.rsiLine.setData(d);
+                    S.current.rsiOb.setData(d.map(v => ({ time: v.time, value: 70 })));
+                    S.current.rsiOs.setData(d.map(v => ({ time: v.time, value: 30 })));
+                    S.current.rsiMid.setData(d.map(v => ({ time: v.time, value: 50 })));
+                } else if (subInd === "macd") {
+                    S.current.macdLine.setData(filtered.map(v => ({ time: v.time, value: v.macd })));
+                    S.current.macdSig.setData(filtered.map(v => ({ time: v.time, value: v.macd_signal })));
+                    S.current.macdHist.setData(filtered.map(v => ({ time: v.time, value: v.macd_hist, color: v.macd_hist >= 0 ? "rgba(34,197,94,0.65)" : "rgba(239,68,68,0.65)" })));
+                }
+            } else {
+                // Priority 2: Use Web Worker for Heavy Calculation (Performance)
+                runWorkerCalc();
             }
         } else {
-            // Priority 2: Use Web Worker for Heavy Calculation (Performance)
-            runWorkerCalc();
+            // Clear all indicators to prevent old/unrelated details from displaying
+            const keysToClear = [
+                "sma20", "sma50", "ema200", "ema9", "ema21", "vwap", 
+                "bbUp", "bbMid", "bbLo", "ichT", "ichK",
+                "rsiLine", "rsiOb", "rsiOs", "rsiMid",
+                "macdLine", "macdSig", "macdHist",
+                "stochK", "stochD", "stochOb", "stochOs",
+                "adxLine", "adxPos", "adxNeg", "adx25",
+                "obvLine", "cciLine", "cciOb", "cciOs", "cciMid",
+                "wrLine", "wrOb", "wrOs"
+            ];
+            keysToClear.forEach(k => S.current[k]?.setData([]));
         }
 
         // Clear unused indicators

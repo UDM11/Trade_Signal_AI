@@ -1,6 +1,6 @@
 import { api } from '../api';
 
-const STALE_MS  = 30_000;
+const STALE_MS  = 300_000;
 const CACHE_KEY = 'ts_predictions_cache';
 
 // Load initial data from LocalStorage for instant-on experience

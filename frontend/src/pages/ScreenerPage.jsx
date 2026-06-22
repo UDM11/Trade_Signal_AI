@@ -173,7 +173,7 @@ const TableRow = React.memo(({ r, rank, onSelect }) => {
     const conf = +(r.confidence_score ?? 0);
     const rr = r.risk_reward;
     const rrColor = rr >= 2 ? 'text-buy' : rr >= 1 ? 'text-hold' : 'text-sell';
-    const latestClose = r.latest_close;
+    const latestClose = r.latest_close ?? r.ai_analysis?.latest_close ?? (r.chart_data?.length ? r.chart_data[r.chart_data.length - 1]?.close : null);
 
     return (
         <tr className="border-b transition-all cursor-pointer group hover:bg-white/[0.03] animate-in slide-in-from-right-4 fade-in duration-300"

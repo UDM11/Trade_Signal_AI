@@ -111,6 +111,43 @@
                 "features_used": 71
             },
             "status": "active"
+        },
+        {
+            "filename": "model_xgb_20260622_222905.pkl",
+            "date": "2026-06-22T22:29:05.659067",
+            "accuracy": 53.25,
+            "metrics": {
+                "accuracy": 53.25,
+                "threshold_used": 1.5,
+                "per_class": {
+                    "SELL": {
+                        "precision": 50.8,
+                        "recall": 43.5,
+                        "f1": 46.9,
+                        "support": 147
+                    },
+                    "HOLD": {
+                        "precision": 73.1,
+                        "recall": 53.2,
+                        "f1": 61.6,
+                        "support": 348
+                    },
+                    "BUY": {
+                        "precision": 36.5,
+                        "recall": 62.0,
+                        "f1": 46.0,
+                        "support": 166
+                    }
+                },
+                "regime_experts": 3,
+                "regime_metrics": {
+                    "0": 100.0,
+                    "1": 100.0,
+                    "2": 100.0
+                },
+                "features_used": 71
+            },
+            "status": "staging"
         }
     ]
 }
