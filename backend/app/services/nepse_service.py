@@ -29,9 +29,9 @@ def is_market_open() -> bool:
     now = _npt_now()
     t, wd = now.time(), now.weekday()
     
-    # NEPSE Schedule: Sunday (6) to Thursday (3) 
-    # Friday (4) and Saturday (5) are holidays
-    if wd in (4, 5):
+    # NEPSE Schedule: Monday (0) to Friday (4) 
+    # Saturday (5) and Sunday (6) are holidays
+    if wd in (5, 6):
         return False
         
     # Open session: 11:00 AM to 3:00 PM
@@ -41,8 +41,8 @@ def get_market_status() -> str:
     now = _npt_now()
     t, wd = now.time(), now.weekday()
     
-    # 4 = Friday, 5 = Saturday
-    if wd in (4, 5):
+    # 5 = Saturday, 6 = Sunday
+    if wd in (5, 6):
         return "CLOSED"
         
     # Pre-open session: 10:30 AM to 11:00 AM (includes matching window)
@@ -67,14 +67,14 @@ def get_latest_trading_date() -> str:
     t = now.time()
     wd = now.weekday()
     
-    # NEPSE Trading: Sun(6) to Thu(3). Fri(4) & Sat(5) are holidays.
+    # NEPSE Trading: Mon(0) to Fri(4). Sat(5) & Sun(6) are holidays.
     # If today is a trading day and it's after market open (11:00 AM), today is the active session.
-    if wd in (6, 0, 1, 2, 3) and t >= dtime(11, 0):
+    if wd in (0, 1, 2, 3, 4) and t >= dtime(11, 0):
         return now.strftime("%Y-%m-%d")
         
     # Otherwise, go back day by day until we find a trading day.
     check = now - timedelta(days=1)
-    while check.weekday() in (4, 5):
+    while check.weekday() in (5, 6):
         check -= timedelta(days=1)
     return check.strftime("%Y-%m-%d")
 
@@ -664,8 +664,7 @@ async def get_stock_chart(symbol: str) -> dict:
             })
         return {"symbol": "NEPSE", "chart_data": processed, "count": len(processed)}
 
-    if not sec_id:
-        return {"error": f"Security ID not found for {symbol}", "chart_data": []}
+
 
     async def get_db_data(sym: str):
         try:

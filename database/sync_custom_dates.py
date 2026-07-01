@@ -35,9 +35,20 @@ async def main():
     print("into Supabase for specified dates.")
     print("===========================================\n")
     
-    # 1. Ask or set default target dates
-    target_dates = ["2026-06-21", "2026-06-22"]
-    print(f"Target Sync Dates: {', '.join(target_dates)}")
+    # 1. Generate a continuous range of target dates (inclusive, skipping Saturdays & Sundays)
+    import datetime
+    start_date = datetime.date(2026, 6, 21)
+    end_date = datetime.date(2026, 7, 1)
+    
+    target_dates = []
+    curr = start_date
+    while curr <= end_date:
+        # NEPSE is closed on Saturday (5) and Sunday (6)
+        if curr.weekday() not in (5, 6):
+            target_dates.append(curr.strftime("%Y-%m-%d"))
+        curr += datetime.timedelta(days=1)
+        
+    print(f"Target Sync Dates ({len(target_dates)} trading days): {', '.join(target_dates)}")
 
     # 2. Initialize Supabase
     from app.services.supabase_client import get_supabase
